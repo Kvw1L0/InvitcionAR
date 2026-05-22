@@ -42,10 +42,12 @@ let materialBoca = null;
 let materialOjos = null;
 
 // ==========================================
-// 4. CARGAR AVATAR (.GLB)
+// 4. CARGAR AVATAR DESDE FIREBASE
 // ==========================================
+const urlModelo = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=1b020122-46cf-43dd-aadc-c3676760ba1f';
+
 const loader = new GLTFLoader();
-loader.load('./avatar_ia.glb', (gltf) => {
+loader.load(urlModelo, (gltf) => {
     const model = gltf.scene;
     scene.add(model);
     
@@ -71,6 +73,9 @@ loader.load('./avatar_ia.glb', (gltf) => {
             }
         }
     });
+    console.log("Avatar cargado exitosamente desde Firebase.");
+}, undefined, (error) => {
+    console.error("Error al cargar el avatar desde Firebase:", error);
 });
 
 // ==========================================
