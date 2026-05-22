@@ -23,10 +23,10 @@ document.body.appendChild(renderer.domElement);
 // ==========================================
 // 2. ILUMINACIÓN (Suave y sin quemar)
 // ==========================================
-const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Luz base normal
+const ambientLight = new THREE.AmbientLight(0xffffff, 2.0); // Luz base normal
 scene.add(ambientLight);
 
-const frontalLight = new THREE.DirectionalLight(0xffffff, 1.2); // Luz para el metal
+const frontalLight = new THREE.DirectionalLight(0xffffff, 1.8); // Luz para el metal
 frontalLight.position.set(0, 2, 5);
 scene.add(frontalLight);
 
