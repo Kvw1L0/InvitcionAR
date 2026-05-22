@@ -5,30 +5,28 @@ import { RenderPass } from 'https://esm.sh/three@0.136.0/examples/jsm/postproces
 import { UnrealBloomPass } from 'https://esm.sh/three@0.136.0/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 // ==========================================
-// 1. CONFIGURACIÓN DE LA ESCENA
+// 1. ESCENA Y CÁMARA
 // ==========================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0a); // Fondo oscuro
+scene.background = new THREE.Color(0x050505);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 5.5); // Distancia calibrada para que quede bien enmarcado
+camera.position.set(0, 0, 5.5); // Cámara centrada
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
-renderer.toneMapping = THREE.ACESFilmicToneMapping; 
-renderer.toneMappingExposure = 1.0; // Exposición normal para evitar el quemado blanco
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0; 
 document.body.appendChild(renderer.domElement);
 
 // ==========================================
-// 2. ILUMINACIÓN (Replicando el estudio de Blender)
+// 2. ILUMINACIÓN (Suave y sin quemar)
 // ==========================================
-// Luz Ambiente Fuerte: Baña al robot desde todos los ángulos para que no haya sombras negras duras
-const ambientLight = new THREE.AmbientLight(0xffffff, 2.5); 
+const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); // Luz base normal
 scene.add(ambientLight);
 
-// Luz Frontal Suave: Solo da un pequeño brillo al metal frontal, sin exagerar
-const frontalLight = new THREE.DirectionalLight(0xffffff, 0.4); 
+const frontalLight = new THREE.DirectionalLight(0xffffff, 1.2); // Luz para el metal
 frontalLight.position.set(0, 2, 5);
 scene.add(frontalLight);
 
@@ -36,60 +34,48 @@ let materialBoca = null;
 let materialOjos = null;
 
 // ==========================================
-// 3. CARGAR EL AVATAR
+// 3. CARGAR AVATAR (Respetando tu textura de Blender)
 // ==========================================
 const loader = new GLTFLoader();
-loader.load('./animador1.glb', (gltf) => {
+loader.load('./avatar_ia.glb', (gltf) => {
     const model = gltf.scene;
     scene.add(model);
     
-    // CENTRADO PERFECTO: 
+    // Centrado
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
-    model.position.sub(center); 
+    model.position.sub(center);
 
     model.traverse((child) => {
         if (child.isMesh) {
             const name = child.name.toLowerCase();
-            const isGlow = name.includes('boca') || name.includes('ojo') || name.includes('od') || name.includes('oi');
-
-            // SOLUCIÓN AL METAL: 
-            if (!isGlow) {
-                // Bajamos el nivel de "espejo" para que no refleje la oscuridad
-                // y aumentamos la rugosidad para que se vea el plateado de tu textura
-                child.material.metalness = 0.1; 
-                child.material.roughness = 0.8;
-                child.material.needsUpdate = true;
-            }
-
-            // SOLUCIÓN A LOS OJOS (Glow Rojo Puro):
+            
+            // SOLO tocamos los ojos y la boca para darles luz pura.
+            // La cabeza se queda con la textura PNG original intacta.
             if (name.includes('boca')) {
                 materialBoca = child.material;
                 materialBoca.emissive = new THREE.Color(0xff0000);
-                // Intensidad en 2.5 mantiene el color rojo intacto sin volverlo blanco
-                materialBoca.emissiveIntensity = 2.5; 
+                materialBoca.emissiveIntensity = 5.0; 
             }
             if (name.includes('od') || name.includes('oi') || name.includes('ojo')) {
                 materialOjos = child.material;
                 materialOjos.emissive = new THREE.Color(0xff0000);
-                materialOjos.emissiveIntensity = 2.5;
+                materialOjos.emissiveIntensity = 5.0;
             }
         }
     });
-}, undefined, (error) => {
-    console.error("Error al cargar el avatar:", error);
 });
 
 // ==========================================
-// 4. PIPELINE NEÓN (Glow LED)
+// 4. BLOOM (Protegiendo la cara)
 // ==========================================
 const renderScene = new RenderPass(scene, camera);
 
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight), 
-    1.2,  // Fuerza del brillo
-    0.5,  // Tamaño de la expansión del neón
-    0.6   // Umbral: Evita que el metal brille, asegurando que SOLO los ojos hagan neón
+    1.2,  // Intensidad del glow
+    0.4,  // Expansión
+    0.95  // UMBRAL ALTO: Esto es un escudo. Impide que la cabeza brille, SOLO agarra los ojos.
 );
 
 const composer = new EffectComposer(renderer);
@@ -97,7 +83,7 @@ composer.addPass(renderScene);
 composer.addPass(bloomPass);
 
 // ==========================================
-// 5. ANIMACIÓN BÁSICA
+// 5. ANIMACIÓN
 // ==========================================
 const clock = new THREE.Clock();
 
@@ -106,18 +92,13 @@ function animate() {
     const elapsedTime = clock.getElapsedTime();
 
     if (materialOjos) {
-        // Oscilación sutil que no sobrepasa el límite del color rojo
-        materialOjos.emissiveIntensity = 2.0 + Math.sin(elapsedTime * 2) * 0.8;
+        materialOjos.emissiveIntensity = 3.0 + Math.sin(elapsedTime * 2) * 2.0;
     }
 
     composer.render();
 }
-
 animate();
 
-// ==========================================
-// 6. RESPONSIVE
-// ==========================================
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
