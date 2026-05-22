@@ -9,10 +9,10 @@ import { RoomEnvironment } from 'https://esm.sh/three@0.136.0/examples/jsm/envir
 // 1. CONFIGURACIÓN DE ESCENA Y RENDERER
 // ==========================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x050505); 
+scene.background = new THREE.Color(0x020000); // Fondo con un micro-toque rojizo oscuro
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 5.5); 
+camera.position.set(0, 0, 8.5); // Alejamos un poco la cámara para que tenga espacio para volar
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -30,28 +30,32 @@ scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).textur
 // ==========================================
 // 3. ILUMINACIÓN BASE
 // ==========================================
-const ambientLight = new THREE.AmbientLight(0xffffff, 1.0); 
+const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); 
 scene.add(ambientLight);
 
-const frontalLight = new THREE.DirectionalLight(0xffffff, 1.0); 
+const frontalLight = new THREE.DirectionalLight(0xffffff, 1.5); 
 frontalLight.position.set(0, 2, 5);
 scene.add(frontalLight);
 
-// Variables globales para animar
+// ==========================================
+// 4. VARIABLES GLOBALES INDEPENDIENTES
+// ==========================================
 let materialBoca = null;
-let materialOjos = null;
-let avatarModel = null; // Guardamos el modelo completo para moverlo
+let materialOjoDerecho = null;
+let materialOjoIzquierdo = null;
+let avatarModel = null; 
 
 // ==========================================
-// 4. CARGAR AVATAR DESDE FIREBASE
+// 5. CARGAR AVATAR DESDE FIREBASE
 // ==========================================
 const urlModelo = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=1b020122-46cf-43dd-aadc-c3676760ba1f';
 
 const loader = new GLTFLoader();
 loader.load(urlModelo, (gltf) => {
-    avatarModel = gltf.scene; // Asignamos el modelo a la variable global
+    avatarModel = gltf.scene; 
     scene.add(avatarModel);
     
+    // Centrado matemático
     const box = new THREE.Box3().setFromObject(avatarModel);
     const center = box.getCenter(new THREE.Vector3());
     avatarModel.position.sub(center);
@@ -60,15 +64,21 @@ loader.load(urlModelo, (gltf) => {
         if (child.isMesh) {
             const name = child.name.toLowerCase();
             
+            // INTENSIDAD SOLAR: Subimos la emisión base a 20.0
             if (name.includes('boca')) {
                 materialBoca = child.material;
                 materialBoca.emissive = new THREE.Color(0xff0000);
-                materialBoca.emissiveIntensity = 5.0; 
+                materialBoca.emissiveIntensity = 20.0; 
             }
-            if (name.includes('od') || name.includes('oi') || name.includes('ojo')) {
-                materialOjos = child.material;
-                materialOjos.emissive = new THREE.Color(0xff0000);
-                materialOjos.emissiveIntensity = 5.0;
+            if (name.includes('ojo_derecho')) {
+                materialOjoDerecho = child.material;
+                materialOjoDerecho.emissive = new THREE.Color(0xff0000);
+                materialOjoDerecho.emissiveIntensity = 20.0;
+            }
+            if (name.includes('ojo_izquierdo')) {
+                materialOjoIzquierdo = child.material;
+                materialOjoIzquierdo.emissive = new THREE.Color(0xff0000);
+                materialOjoIzquierdo.emissiveIntensity = 20.0;
             }
         }
     });
@@ -77,15 +87,15 @@ loader.load(urlModelo, (gltf) => {
 });
 
 // ==========================================
-// 5. EFECTO NEÓN (BLOOM)
+// 6. EFECTO NEÓN RADICAL (BLOOM)
 // ==========================================
 const renderScene = new RenderPass(scene, camera);
 
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight), 
-    1.2,  
-    0.4,  
-    0.95  
+    3.0,  // FUERZA DEL GLOW: Extremadamente alto
+    1.0,  // EXPANSIÓN: El aura llegará mucho más lejos
+    0.95  // ESCUDO: Mantiene el metal a salvo del resplandor
 );
 
 const composer = new EffectComposer(renderer);
@@ -93,7 +103,7 @@ composer.addPass(renderScene);
 composer.addPass(bloomPass);
 
 // ==========================================
-// 6. BUCLE DE ANIMACIÓN (MOVIMIENTO AUTÓNOMO)
+// 7. BUCLE DE ANIMACIÓN (ESTRAMBÓTICO)
 // ==========================================
 const clock = new THREE.Clock();
 
@@ -101,25 +111,29 @@ function animate() {
     requestAnimationFrame(animate);
     const elapsedTime = clock.getElapsedTime();
 
-    // 1. Animación LED de los ojos (respiración)
-    if (materialOjos) {
-        materialOjos.emissiveIntensity = 3.0 + Math.sin(elapsedTime * 2) * 2.0;
+    // Latido nuclear: Oscila violentamente entre 10 y 30 de intensidad
+    if (materialOjoDerecho && materialOjoIzquierdo) {
+        const latidoNuclear = 20.0 + Math.sin(elapsedTime * 4) * 10.0;
+        materialOjoDerecho.emissiveIntensity = latidoNuclear;
+        materialOjoIzquierdo.emissiveIntensity = latidoNuclear;
     }
 
-    // 2. Animación Procedural del Modelo (Vida propia)
+    if (materialBoca) {
+        // La boca se mantiene como una caldera encendida a punto de hablar
+        materialBoca.emissiveIntensity = 15.0; 
+    }
+
+    // Movimiento Caótico / Estrambótico
     if (avatarModel) {
-        // Flotar suavemente como si respirara (eje Y)
-        avatarModel.position.y = Math.sin(elapsedTime * 1.5) * 0.08;
-        
-        // Mirar sutilmente a los lados (rotación sobre eje Y)
-        // Multiplicar el tiempo por números distintos rompe el patrón para que se vea aleatorio
-        avatarModel.rotation.y = Math.sin(elapsedTime * 0.7) * 0.15;
-        
-        // Cabeceo muy leve hacia arriba y abajo (rotación sobre eje X)
-        avatarModel.rotation.x = Math.cos(elapsedTime * 0.5) * 0.05;
-        
-        // Inclinación mínima del cuello (rotación sobre eje Z)
-        avatarModel.rotation.z = Math.sin(elapsedTime * 0.3) * 0.02;
+        // POSICIÓN: Vuela por toda la pantalla (Ejes X, Y, Z ampliados)
+        avatarModel.position.x = Math.sin(elapsedTime * 2.5) * 3.5; // De lado a lado rápido
+        avatarModel.position.y = Math.cos(elapsedTime * 3.0) * 2.0; // Saltos verticales
+        avatarModel.position.z = Math.sin(elapsedTime * 1.5) * 2.5; // Se acerca y se aleja de la cámara
+
+        // ROTACIÓN: Giros de cabeza radicales y desorientadores
+        avatarModel.rotation.y = Math.sin(elapsedTime * 2.0) * Math.PI * 0.8; // Gira casi mirando hacia atrás
+        avatarModel.rotation.x = Math.cos(elapsedTime * 2.2) * 0.8; // Cabecea bruscamente
+        avatarModel.rotation.z = Math.sin(elapsedTime * 3.5) * 0.4; // Tiembla un poco de lado
     }
 
     composer.render();
@@ -127,7 +141,7 @@ function animate() {
 animate();
 
 // ==========================================
-// 7. RESPONSIVE
+// 8. RESPONSIVE
 // ==========================================
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
