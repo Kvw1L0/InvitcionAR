@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Generador Textura Ojos</title>
+    <style>
+        body { font-family: sans-serif; background: #222; color: white; padding: 20px; text-align: center; }
+        canvas { border: 1px solid #444; margin-top: 20px; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
+        button { margin-top: 20px; padding: 10px 20px; font-size: 16px; background: #e50914; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #b20710; }
+    </style>
+</head>
+<body>
+    <h2>Matriz de Ojos (1000x400)</h2>
+    <button onclick="descargarPNG()">Descargar textura_ojos.png</button><br>
+    <canvas id="miCanvas" width="1000" height="400"></canvas>
+
+    <script>
+        const canvas = document.getElementById('miCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 1. Fondo negro absoluto (Emisión cero)
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, 1000, 400);
+
+        // 2. Configuración de la luz (Blanco puro para poder colorear en web)
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 12;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // Función para centrar dibujos en cada celda de 200x200
+        function drawCell(col, row, drawFunc) {
+            ctx.save();
+            ctx.translate(col * 200, row * 200);
+            drawFunc(ctx);
+            ctx.restore();
+        }
+
+        // Fila 0
+        drawCell(0, 0, (c) => { c.beginPath(); c.moveTo(50, 100); c.lineTo(150, 100); c.stroke(); }); // Neutral
+        drawCell(1, 0, (c) => { c.beginPath(); c.arc(100, 120, 50, Math.PI, 0); c.stroke(); }); // Feliz
+        drawCell(2, 0, (c) => { c.beginPath(); c.arc(100, 80, 50, 0, Math.PI); c.stroke(); }); // Triste
+        drawCell(3, 0, (c) => { c.beginPath(); c.arc(100, 100, 40, 0, Math.PI*2); c.stroke(); }); // Sorpresa
+        drawCell(4, 0, (c) => { c.beginPath(); c.moveTo(50, 70); c.lineTo(100, 110); c.lineTo(150, 70); c.stroke(); }); // Enojado
+
+        // Fila 1
+        drawCell(0, 1, (c) => { c.beginPath(); c.moveTo(50, 100); c.lineTo(150, 100); c.lineWidth = 20; c.stroke(); }); // Pestañeo
+        drawCell(1, 1, (c) => { c.beginPath(); c.arc(70, 100, 10, 0, Math.PI*2); c.arc(130, 100, 10, 0, Math.PI*2); c.fill(); }); // Pensando
+        drawCell(2, 1, (c) => { c.beginPath(); c.arc(100, 120, 50, Math.PI, 0); c.stroke(); c.beginPath(); c.moveTo(60, 90); c.lineTo(140, 90); c.stroke(); }); // Guiño (mix)
+        drawCell(3, 1, (c) => { c.beginPath(); c.moveTo(100, 50); c.lineTo(100, 120); c.stroke(); c.beginPath(); c.arc(100, 150, 10, 0, Math.PI*2); c.fill(); }); // Alerta/Exclamación
+        drawCell(4, 1, (c) => { c.beginPath(); c.moveTo(60, 60); c.lineTo(140, 140); c.stroke(); c.beginPath(); c.moveTo(140, 60); c.lineTo(60, 140); c.stroke(); }); // Error/X
+
+        // 3. Guías de cuadrícula muy tenues (para asegurar encuadre)
+        ctx.strokeStyle = '#111111';
+        ctx.lineWidth = 2;
+        for(let i=1; i<5; i++) { ctx.beginPath(); ctx.moveTo(i*200, 0); ctx.lineTo(i*200, 400); ctx.stroke(); }
+        ctx.beginPath(); ctx.moveTo(0, 200); ctx.lineTo(1000, 200); ctx.stroke();
+
+        // 4. Lógica de descarga
+        function descargarPNG() {
+            const link = document.createElement('a');
+            link.download = 'textura_ojos_emociones.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+    </script>
+</body>
+</html>
