@@ -10,7 +10,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0a); // Fondo oscuro para resaltar el neón
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 4.5); // Centrado de frente al avatar
+camera.position.set(0, -2, 4.5); // Centrado de frente al avatar
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -42,7 +42,7 @@ loader.load('./animador1.glb', (gltf) => {
     scene.add(model);
     
     // Ajuste de posición central
-    model.position.set(0, -0.2, 0);
+    model.position.set(0, -2, 0);
 
     // Recorrido de mallas con tolerancia a mayúsculas, espacios o guiones
     model.traverse((child) => {
@@ -81,9 +81,9 @@ const renderScene = new RenderPass(scene, camera);
 // Parámetros: (Resolución, Intensidad del Brillo, Radio de Expansión, Umbral de Activación)
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight), 
-    0.9,  // Fuerza del resplandor neón (aumenta si quieres más aura)
+    0.6,  // Fuerza del resplandor neón (aumenta si quieres más aura)
     0.4,  // Radio de dispersión del "glóbulo" de luz
-    0.15  // Límite de brillo para que el material empiece a brillar
+    0.95  // Límite de brillo para que el material empiece a brillar
 );
 
 const composer = new EffectComposer(renderer);
