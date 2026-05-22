@@ -10,7 +10,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0a); // Fondo oscuro para resaltar el neón
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 8); // Centrado de frente al avatar
+camera.position.set(0, 0, 4.5); // Centrado de frente al avatar
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -25,7 +25,7 @@ document.body.appendChild(renderer.domElement);
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.4); // Luz suave de relleno para ver el casco
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1.5); // Da volumen y reflejos metálicos
+const dirLight = new THREE.DirectionalLight(0xffffff, 2); // Da volumen y reflejos metálicos
 dirLight.position.set(5, 5, 5);
 scene.add(dirLight);
 
