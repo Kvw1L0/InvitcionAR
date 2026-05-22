@@ -44,7 +44,7 @@ let materialOjos = null;
 // 3. CARGAR EL AVATAR Y AJUSTAR MATERIALES (Puntos 1, 2 y 3)
 // ==========================================
 const loader = new GLTFLoader();
-loader.load('./avatar_ia.glb', (gltf) => {
+loader.load('./animador1.glb', (gltf) => {
     const model = gltf.scene;
     scene.add(model);
     
