@@ -10,7 +10,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0a); // Fondo oscuro para resaltar el neón
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 15); // Centrado de frente al avatar
+camera.position.set(0, 0, 10); // Centrado de frente al avatar
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
