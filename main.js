@@ -10,7 +10,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0a0a0a); // Fondo oscuro para resaltar el neón
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 3); // Centrado de frente al avatar
+camera.position.set(0, 0, 15); // Centrado de frente al avatar
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -25,7 +25,7 @@ document.body.appendChild(renderer.domElement);
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.4); // Luz suave de relleno para ver el casco
 scene.add(ambientLight);
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.8); // Da volumen y reflejos metálicos
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.5); // Da volumen y reflejos metálicos
 dirLight.position.set(5, 5, 5);
 scene.add(dirLight);
 
@@ -81,8 +81,8 @@ const renderScene = new RenderPass(scene, camera);
 // Parámetros: (Resolución, Intensidad del Brillo, Radio de Expansión, Umbral de Activación)
 const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight), 
-    1.8,  // Fuerza del resplandor neón (aumenta si quieres más aura)
-    0.5,  // Radio de dispersión del "glóbulo" de luz
+    0.9,  // Fuerza del resplandor neón (aumenta si quieres más aura)
+    0.4,  // Radio de dispersión del "glóbulo" de luz
     0.15  // Límite de brillo para que el material empiece a brillar
 );
 
