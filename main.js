@@ -32,7 +32,7 @@ let materialOjos = null;
 
 // 3. CARGAR EL AVATAR (.GLB)
 const loader = new GLTFLoader();
-loader.load('./avatar_ia.glb', (gltf) => {
+loader.load('./animador1.glb', (gltf) => {
     const model = gltf.scene;
     scene.add(model);
     
