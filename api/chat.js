@@ -23,11 +23,15 @@ export default async function handler(req, res) {
 
         // 2. Transcripción con Deepgram
         // Asegúrate de que tu DEEPGRAM_API_KEY esté correcta en Vercel Settings
-        const deepgram = await axios.post('https://api.deepgram.com/v1/listen', audioBuffer, {
+        // 2. Transcripción con Deepgram
+        const deepgramUrl = 'https://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true';
+        
+        const deepgram = await axios.post(deepgramUrl, audioBuffer, {
             headers: { 
                 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
                 'Content-Type': 'audio/webm' 
             }
+        
         });
         
         const userText = deepgram.data.results.channels[0].alternatives[0].transcript;
