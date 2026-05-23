@@ -1,0 +1,32 @@
+# --- Variables de entorno y secretos (LO MÁS IMPORTANTE) ---
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env
+
+# --- Dependencias (No rastrear los paquetes instalados) ---
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# --- Archivos de construcción (Build) ---
+.next/
+dist/
+out/
+build/
+
+# --- Carpetas de Vercel ---
+.vercel/
+
+# --- Archivos de sistema y logs ---
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Carpetas de editores (Opcional, pero recomendado) ---
+.vscode/
+.idea/
