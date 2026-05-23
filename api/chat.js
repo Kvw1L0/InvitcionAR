@@ -1,36 +1,40 @@
 import OpenAI from 'openai';
 import axios from 'axios';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Función para capturar el flujo de datos (el audio) de forma segura
+async function getRawBody(req) {
+    const chunks = [];
+    for await (const chunk of req) {
+        chunks.push(chunk);
+    }
+    return Buffer.concat(chunks);
+}
 
 export default async function handler(req, res) {
-    if (req.method !== 'POST') return res.status(405).send('Método no permitido');
+    // Solo permitir POST
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
 
     try {
-        const audioBuffer = req.body;
+        // 1. Recibir audio crudo desde el frontend
+        const audioBuffer = await getRawBody(req);
+        if (audioBuffer.length === 0) throw new Error("El archivo de audio está vacío");
 
-        // 1. Transcripción (Deepgram)
+        // 2. Transcripción con Deepgram
+        // Asegúrate de que tu DEEPGRAM_API_KEY esté correcta en Vercel Settings
         const deepgram = await axios.post('https://api.deepgram.com/v1/listen', audioBuffer, {
-            headers: { 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'audio/webm' }
-
-            // ... dentro de tu try { ...
-const audioBuffer = Buffer.from(await req.body);
-console.log("Tamaño del buffer recibido:", audioBuffer.length);
-
-if (!process.env.DEEPGRAM_API_KEY) throw new Error("Falta la API Key de Deepgram");
-
-// Llamada a Deepgram corregida
-const deepgram = await axios.post('https://api.deepgram.com/v1/listen', audioBuffer, {
-    headers: {
-        'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
-        'Content-Type': 'audio/webm' // Aseguramos que sea webm
-    }
-});
-// ...
+            headers: { 
+                'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+                'Content-Type': 'audio/webm' 
+            }
         });
+        
         const userText = deepgram.data.results.channels[0].alternatives[0].transcript;
+        console.log("Usuario dijo:", userText);
 
-        // 2. Pensamiento (OpenAI)
+        // 3. Pensamiento con OpenAI
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const chat = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [
@@ -39,19 +43,21 @@ const deepgram = await axios.post('https://api.deepgram.com/v1/listen', audioBuf
             ]
         });
         const aiText = chat.choices[0].message.content;
+        console.log("IA responde:", aiText);
 
-        // 3. Síntesis (ElevenLabs)
-        const voice = await axios.post(
+        // 4. Síntesis de voz con ElevenLabs
+        const voiceResponse = await axios.post(
             `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
             { text: aiText, model_id: "eleven_turbo_v2_5" },
             { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' }
         );
 
+        // 5. Enviar audio de vuelta al navegador
         res.setHeader('Content-Type', 'audio/mpeg');
-        res.send(Buffer.from(voice.data));
+        res.send(Buffer.from(voiceResponse.data));
 
     } catch (error) {
-        console.error("Error en pipeline:", error);
-        res.status(500).json({ error: "Fallo en el cerebro del robot" });
+        console.error("ERROR EN EL CEREBRO:", error.message);
+        res.status(500).json({ error: error.message });
     }
 }
