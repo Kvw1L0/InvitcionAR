@@ -12,6 +12,21 @@ export default async function handler(req, res) {
         // 1. Transcripción (Deepgram)
         const deepgram = await axios.post('https://api.deepgram.com/v1/listen', audioBuffer, {
             headers: { 'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`, 'Content-Type': 'audio/webm' }
+
+            // ... dentro de tu try { ...
+const audioBuffer = Buffer.from(await req.body);
+console.log("Tamaño del buffer recibido:", audioBuffer.length);
+
+if (!process.env.DEEPGRAM_API_KEY) throw new Error("Falta la API Key de Deepgram");
+
+// Llamada a Deepgram corregida
+const deepgram = await axios.post('https://api.deepgram.com/v1/listen', audioBuffer, {
+    headers: {
+        'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
+        'Content-Type': 'audio/webm' // Aseguramos que sea webm
+    }
+});
+// ...
         });
         const userText = deepgram.data.results.channels[0].alternatives[0].transcript;
 
