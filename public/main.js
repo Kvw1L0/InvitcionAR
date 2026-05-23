@@ -75,37 +75,71 @@ async function enviarAudioABackend(audioBlob) {
 // ==========================================
 // 4. LÓGICA DE GRABACIÓN
 // ==========================================
+// ==========================================
+// 4. LÓGICA DE GRABACIÓN (PUSH-TO-TALK)
+// ==========================================
 let mediaRecorder;
 let audioChunks = [];
+let streamIniciado = false;
 
 const btnStart = document.createElement('button');
-btnStart.innerText = "INICIAR SISTEMA";
+btnStart.innerText = "MANTÉN PRESIONADO PARA HABLAR";
 btnStart.style.position = 'absolute';
-btnStart.style.top = '50%';
+btnStart.style.top = '80%'; // Lo bajé un poco para que no tape la cara del avatar
 btnStart.style.left = '50%';
 btnStart.style.transform = 'translate(-50%, -50%)';
 btnStart.style.padding = '20px 40px';
 btnStart.style.cursor = 'pointer';
 btnStart.style.zIndex = '100';
+btnStart.style.userSelect = 'none'; // Evita que el texto se seleccione en móviles
 document.body.appendChild(btnStart);
 
-btnStart.addEventListener('click', async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-    mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
-    mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        audioChunks = [];
-        enviarAudioABackend(audioBlob);
-    };
+// Función para inicializar el micrófono una sola vez
+async function prepararMicrofono() {
+    if (!streamIniciado) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        
+        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            audioChunks = [];
+            enviarAudioABackend(audioBlob);
+        };
+        streamIniciado = true;
+    }
+}
 
-    mediaRecorder.start();
-    btnStart.innerText = "ESCUCHANDO... (Presiona para enviar)";
-    btnStart.onclick = () => {
+// Eventos al PRESIONAR (Mouse y Táctil)
+const iniciarGrabacion = async (e) => {
+    e.preventDefault(); // Evita comportamientos raros en móviles
+    await prepararMicrofono();
+    if (mediaRecorder.state === 'inactive') {
+        mediaRecorder.start();
+        btnStart.innerText = "ESCUCHANDO... (Habla ahora)";
+        btnStart.style.backgroundColor = "#ff4444"; // Cambio visual para que sepan que graba
+        btnStart.style.color = "white";
+    }
+};
+
+// Eventos al SOLTAR (Mouse y Táctil)
+const detenerGrabacion = (e) => {
+    e.preventDefault();
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
-        btnStart.innerText = "PROCESANDO...";
-    };
-});
+        btnStart.innerText = "PROCESANDO RESPUESTA...";
+        btnStart.style.backgroundColor = ""; // Vuelve al color original
+        btnStart.style.color = "";
+    }
+};
+
+// Asignar los eventos
+btnStart.addEventListener('mousedown', iniciarGrabacion);
+btnStart.addEventListener('touchstart', iniciarGrabacion, { passive: false });
+
+btnStart.addEventListener('mouseup', detenerGrabacion);
+btnStart.addEventListener('touchend', detenerGrabacion, { passive: false });
+btnStart.addEventListener('mouseleave', detenerGrabacion); // Por si el usuario arrastra el dedo fuera del botón
 
 // ==========================================
 // 5. CARGA DE MODELO (FIREBASE)
