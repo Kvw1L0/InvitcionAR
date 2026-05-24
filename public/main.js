@@ -17,7 +17,7 @@ let controls, clock = new THREE.Clock();
 let emissiveMaterials = []; // Para el color
 let glowingMeshes = [];     // NUEVO: Para la deformación (escala) de ojos y boca
 
-const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/avatar-ia.glb?alt=media&token=541669a6-7baa-43d3-8f7e-4d4c2f07db8e'; 
+const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c'; 
 
 // --- Variables de Audio VAD/WebSockets ---
 let audioContext, analyser, microphone, globalStream, mediaRecorder;
