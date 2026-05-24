@@ -8,83 +8,80 @@ function generarNuevoId() {
 
 let userId = generarNuevoId();
 let temporizadorInactividad;
-const TIEMPO_ESPERA_MS = 45000; 
+const TIEMPO_ESPERA_MS = 45000; // 45s de inactividad para resetear
 
 // --- Variables 3D (Three.js + Bloom Dinámico) ---
-let scene, camera, renderer, model, mixer, controls; 
-let clock = new THREE.Clock(); 
+let scene, camera, renderer, model, mixer, composer, bloomPass; 
+let controls, clock = new THREE.Clock(); 
 
-// Colecciones para el Glow y Lip-Sync Orgánico
-let emissiveMaterials = []; // Solo para el color neón sangrante
-let glowingMeshes = [];     // Solo para la deformación orgánica en su sitio
+// Colecciones GLOBALES para el Glow y Lip-Sync Orgánico
+let emissiveMaterials = []; // Colección de los materiales para el color neón sangrante (Ojos/Boca)
+let glowingMeshes = [];     // Colección de las mallas 3D para la deformación orgánica (Ojos/Boca)
 
 // RUTA FIREBASE BLINDADA
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c'; 
 
 // --- Variables de Audio VAD/WebSockets (El motor rápido que funciona) ---
 let audioContext, analyser, microphone, globalStream, mediaRecorder;
-// ... variables VAD iguales ...
 let isUserSpeaking = false; 
 let silenceTimer = null;
 let isCalibrating = false;
+let avatarHablando = false; 
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
 const SIGNAL_TO_NOISE_MARGIN = 10; 
-const SILENCE_DURATION = 600; 
+const SILENCE_DURATION = 600; // Ultra baja latencia: 600ms
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
-
-// --- Variables de Audio Playback (Salida de voz del avatar - Lip-sync) ---
-let avatarHablando = false; 
-let reproductorAnalyser; // Analizador para medir el volumen de ElevenLabs
-let dataArrayPlayback;   // Array para guardar los datos de frecuencia del playback
-
-// --- Variables de Post-Procesamiento VISUAL (EL CORAZÓN DEL GLOW SANGRIENTO) ---
-let composer, renderPass, bloomPass;
 
 // ==========================================
 // SECCIÓN 1: MOTOR GRÁFICO (THREE.JS + BLOOM SELECTIVO HDR)
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js con Post-Procesamiento Visual...");
+    console.log("⚙️ Inicializando Three.js con HDR Selectivo y Post-processing...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0f18); // Negro Jungle muy oscuro
 
+    // Cámara centrada y a altura de los ojos para el BTL
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 0, 3.8); 
+    camera.position.set(0, 0, 3.8); // Ajustar posición para ver detalles (Ver imagen)
 
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setClearColor( 0x000000, 1 ); 
+    renderer.setClearColor( 0x000000, 1 ); // Fondo negro absoluto para mayor contraste del glow
 
-    // NO TONE MAPPING VITAL: Para que el color rojo sangre puro no se "aplane".
+    // Activar renderizado HDR vital para materiales emisivos (Glow)
     renderer.outputEncoding = THREE.sRGBEncoding; 
-    renderer.toneMapping = THREE.NoToneMapping; 
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     container.appendChild(renderer.domElement);
 
-    // FIX CLAVE 1: ILUMINACIÓN NATURAL Y REFLEJOS METÁLICOS (IGUAL QUE ANTES)
-    // Mantenemos la luz ambiental y direccional fuerte para que el metal se vea genial.
+    // FIX CLAVE 1: ILUMINACIÓN NATURAL Y REFLEJOS METÁLICOS (TÚ REQUERIMIENTO)
+    // Devolvemos la luz ambiental y las luces direccionales para que el casco metálico brille.
     const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // Luz base fuerte
     scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5); // Foco principal
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5); // Foco principal para texturas
     directionalLight.position.set(2, 2, 5);
     scene.add(directionalLight);
 
-    // CONFIGURACIÓN POST-PROCESAMIENTO: MOTOR DE BLOOM (LAVA/GLOW ROJO SANGRIENTO)
-    renderPass = new THREE.RenderPass(scene, camera);
-    
-    // bloomPass = new THREE.UnrealBloomPass( resolución, fuerza, radio, umbral )
-    // strength (2.8): Mucha fuerza para ese efecto "sangrante".
-    // radius (1.2): Radio amplio de dispersión de luz de lava.
-    // threshold (2.5): Umbral alto para que SOLO los ojos (que pondremos a 15+) sangren.
-    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.8, 1.2, 2.5);
+    // Luces extra cinematográficas para el metal
+    const fillLight = new THREE.DirectionalLight(0xddddff, 1.0); // Luz azulada de relleno cinematográfico
+    fillLight.position.set(-5, 3, -5);
+    scene.add(fillLight);
+
+    // CONFIGURACIÓN POST-PROCESAMIENTO: MOTOR DE BLOOM (LED Glow Sangrante)
+    //bloomPass = new THREE.UnrealBloomPass( resolución, fuerza, radio, umbral )
+    //strength (2.8): Mucha fuerza para ese efecto "sangrante".
+    //radius (1.2): Radio amplio de dispersión de luz.
+    //threshold (1.5): Umbral ajustado para que los ojos (que pondremos a 15+) sangren sin teñir el metal gris.
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.8, 1.2, 1.5);
     
     composer = new THREE.EffectComposer(renderer);
-    composer.addPass(renderPass);
+    composer.addPass(new THREE.RenderPass(scene, camera));
     composer.addPass(bloomPass);
 
     if (typeof THREE.OrbitControls !== 'undefined') {
@@ -105,23 +102,29 @@ function onWindowResize() {
 }
 
 // ==========================================
-// SECCIÓN 2: CARGADOR DE MODELO (TARGETING DE MATERIALES)
+// SECCIÓN 2: CARGADOR DE MODELO (TARGETING POR NOMBRE)
 // ==========================================
 
 function loadModel() {
-    console.log(`⚙️ Cargando modelo 3D y aislando Ojos/Boca...`);
+    console.log(`⚙️ Cargando modelo 3D desde Firebase Storage...`);
     const loader = new THREE.GLTFLoader();
+
+    // Necesario para texturas remotas de Firebase
     loader.setCrossOrigin('anonymous');
 
     loader.load(MODEL_PATH, (gltf) => {
         model = gltf.scene;
+        
+        // Ajustes de posición y escala (Ver imagen)
         model.scale.set(1, 1, 1); 
-        model.position.set(0, 0, 0); 
+        model.position.set(0, 0, 0); // En el suelo/centro (Ver imagen)
 
+        // Limpiamos las colecciones globales
         emissiveMaterials = [];
         glowingMeshes = [];
 
-        // TRAVERSAL CLAVE: BÚSQUEDA DE MATERIALES EMISIVOS (Ojos/Boca)
+        // REINTEGRACIÓN MEJORADA 1: AJUSTE DE MATERIALES LED ROJOS (Glow Base Constante)
+        // Travesamos el modelo de forma robótica buscando los materiales emisivos (ojos, boca)
         model.traverse((child) => {
             if (child.isMesh && child.material) {
                 const materials = Array.isArray(child.material) ? child.material : [child.material];
@@ -138,23 +141,27 @@ function loadModel() {
                         mat.emissiveIntensity = 15.0; 
                         
                         // Guardamos referencias globales
-                        emissiveMaterials.push(mat); // Para cambiar color neón
-                        glowingMeshes.push(child); // Para aplicar Lip-Sync orgánico en local center
+                        emissiveMaterials.push(mat); 
+                        glowingMeshes.push(child); // Para Lip-Sync orgánico en su sitio
                         
                         // Calculamos el centro geométrico exacto de la malla para la deformación en su sitio
                         child.geometry.computeBoundingBox();
-                        console.log(`✨ LED Sangrante Aislado en: ${child.name}`);
+                        console.log(`✨ LED Neón Sangrante Aislado en: ${child.name} (Material: ${mat.name})`);
                     } 
                     else {
-                        // SI NO ES OJO NI BOCA: Nos aseguramos de apagar su emisión
+                        // SI NO ES OJO NI BOCA: Aseguramos de apagar su emisión
                         mat.emissive.setHex(0x000000); 
+                        mat.emissiveIntensity = 0;
+                        mat.metalness = 1.0;  // Metal puro
+                        mat.roughness = 0.35; // Rugosidad media para reflejos elegantes, no espejados
+                        console.log(`🛡️ Metal Gris Configurado en: ${child.name}`);
                     }
                 });
             }
         });
 
         scene.add(model);
-        console.log("✅ Modelo 3D cargado correctamente con Ojos encendidos.");
+        console.log("✅ Modelo 3D cargado correctamente con texturas y Ojos encendidos.");
 
         // Encender animaciones internas del GLB si existen
         if (gltf.animations && gltf.animations.length > 0) {
@@ -180,13 +187,13 @@ function animate() {
     if (mixer) mixer.update(delta); // Reproducir animación interna
     if (controls) controls.update(); 
     
-    // Efecto de flotación suave y contínua
+    // Efecto de flotación suave y contínua (como en la imagen)
     if (model) {
         const time = Date.now() * 0.002;
-        model.position.y = Math.sin(time) * 0.15; 
+        model.position.y = Math.sin(time) * 0.15; // Sube y baja suavemente
     }
 
-    // FIX CLAVE 3: LIP-SYNC ORGÁNICO EN SU SITIO (Ojos y Boca que palpitan)
+    // FIX CLAVE 3: LIP-SYNC ORGÁNICO EN SU SITIO (Glow + Deformación en local center)
     // Si el avatar está hablando, calculamos la intensidad del brillo en tiempo real.
     if (avatarHablando && reproductorAnalyser && emissiveMaterials.length > 0) {
         reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
@@ -198,15 +205,15 @@ function animate() {
         }
         const averageVolume = sum / dataArrayPlayback.length; // Valor entre 0 y 255
         
-        // MAPEADO 1: INTENSIDAD LUMÍNICA (Glow lava sangrante)
-        // Valor base pasivo: 15.0. Estalla hasta 60.0 con la voz (Lip-sync orgánico)
-        const dynamicIntensity = 15.0 + (averageVolume * (45.0 / 255.0));
+        // MAPEADO 1: INTENSIDAD LUMÍNICA (Glow neón sangrante)
+        // Valor base pasivo: 15.0. Estalla hasta 30.0 con la voz (Lip-sync orgánico)
+        const dynamicIntensity = 15.0 + (averageVolume * (15.0 / 255.0));
         
         // Aplicamos el latido de luz directamente a SOLO ojos y boca
         emissiveMaterials.forEach(mat => mat.emissiveIntensity = dynamicIntensity);
 
         // MAPEADO 2: DEFORMACIÓN ORGÁNICA EN SU SITIO (TÚ REQUERIMIENTO)
-        // En lugar de mover el modelo hacia abajo, aplicamos una escala procedural programada alrededor de su local center.
+        // En lugar de mover el modelo hacia abajo, aplicamos una escala procedural (deformación) programada alrededor de su local center.
         // Recorremos la colección glowingMeshes que poblamos en el load.
         glowingMeshes.forEach(mesh => {
             // Buscamos quirúrgicamente los nombres de Blender para aplicar la deformación orgánica.
@@ -391,14 +398,12 @@ async function enviarTextoAlCerebro(textoUsuario) {
         console.log("🤖 IA responde:", data.text);
         
         avatarHablando = true; // El avatar comienza a hablar
-        
-        // Creamos el elemento Audio nativo
-        const reproductorElement = new Audio();
-        reproductorElement.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
-        reproductorElement.crossOrigin = "anonymous"; // Vital para Firebase/CORS
+        const reproductor = new Audio();
+        reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
+        reproductor.crossOrigin = "anonymous"; // Vital para Firebase
         
         // Creamos el nodo de fuente de audio en el contexto existente
-        const fuenteAudio = audioContext.createMediaElementSource(reproductorElement);
+        const fuenteAudio = audioContext.createMediaElementSource(reproductor);
         
         // CONEXIÓN CLAVE: fuente -> analizador playback -> parlantes
         fuenteAudio.connect(reproductorAnalyser);
@@ -406,9 +411,9 @@ async function enviarTextoAlCerebro(textoUsuario) {
         
         console.log("🔥 Lip-Sync Orgánico (Deformación + Glow) activado.");
         
-        await reproductorElement.play();
+        await reproductor.play();
         
-        reproductorElement.onended = () => {
+        reproductor.onended = () => {
             avatarHablando = false; // El avatar termina de hablar
             resetearTemporizador();
             
