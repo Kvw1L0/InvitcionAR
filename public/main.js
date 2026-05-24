@@ -7,14 +7,12 @@ function generarNuevoId() {
 
 let userId = generarNuevoId();
 let temporizadorInactividad;
-const TIEMPO_ESPERA_MS = 45000; // 45 segundos para resetear la sesión
+const TIEMPO_ESPERA_MS = 45000; 
 
 function reiniciarSesionTotem() {
     userId = generarNuevoId();
     console.log("🔄 Sesión reiniciada. Tótem listo para una nueva persona: " + userId);
-    // Recalibramos el ruido de fondo por si el evento está más ruidoso ahora
     calibrarRuidoAmbiente(); 
-    // Aquí puedes disparar una animación 3D de "Idle" o "Esperando"
 }
 
 function resetearTemporizador() {
@@ -23,10 +21,10 @@ function resetearTemporizador() {
 }
 
 // ==========================================
-// 2. MOTOR VAD + WEBSOCKET DEEPGRAM EN VIVO
+// 2. MOTOR VAD + WEBSOCKET DEEPGRAM CONTINUO
 // ==========================================
 let audioContext, analyser, microphone, mediaRecorder;
-let isRecording = false;
+let isUserSpeaking = false; // Interruptor lógico
 let silenceTimer = null;
 let isCalibrating = false;
 let avatarHablando = false; 
@@ -34,9 +32,9 @@ let avatarHablando = false;
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
 const SIGNAL_TO_NOISE_MARGIN = 10; 
-const SILENCE_DURATION = 600; // ¡Reducido a 600ms para latencia extrema!
+const SILENCE_DURATION = 600; // Ultra baja latencia: 600 milisegundos
 
-// Variables del WebSocket
+// Variables de Conexión
 let deepgramSocket;
 let transcripcionAcumulada = "";
 
@@ -45,22 +43,36 @@ async function conectarDeepgram() {
         const res = await fetch('/api/deepgram-token');
         const data = await res.json();
         
-        // Abrimos el WebSocket nativo del navegador directo a Deepgram
-        deepgramSocket = new WebSocket('wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true', ['token', data.key]);
+        deepgramSocket = new WebSocket('wss://api.deepgram.com/v1/listen?language=es&model=nova-2', ['token', data.key]);
         
-        deepgramSocket.onopen = () => console.log("⚡ Conexión en vivo con Deepgram establecida.");
+        deepgramSocket.onopen = () => {
+            console.log("⚡ Conexión en vivo con Deepgram establecida.");
+            
+            // Latido de seguridad: Evita que Deepgram nos desconecte si hay mucho silencio
+            setInterval(() => {
+                if (deepgramSocket.readyState === 1) {
+                    deepgramSocket.send(JSON.stringify({ type: "KeepAlive" }));
+                }
+            }, 8000);
+        };
         
         deepgramSocket.onmessage = (message) => {
             const respuesta = JSON.parse(message.data);
-            if (respuesta.is_final && respuesta.channel.alternatives[0].transcript) {
-                // Vamos guardando las palabras mientras la persona habla
-                transcripcionAcumulada += respuesta.channel.alternatives[0].transcript + " ";
+            if (respuesta.channel && respuesta.channel.alternatives[0].transcript) {
+                const texto = respuesta.channel.alternatives[0].transcript.trim();
+                
+                // LA MAGIA: Deepgram transcribe todo, pero SOLO guardamos el texto 
+                // si nuestra calibración de ruido confirma que hay una persona hablando fuerte.
+                if (isUserSpeaking && texto !== "") {
+                    transcripcionAcumulada += texto + " ";
+                    console.log("📝 Escuchando:", transcripcionAcumulada);
+                }
             }
         };
 
         deepgramSocket.onclose = () => {
             console.log("Deepgram desconectado. Reconectando en 1s...");
-            setTimeout(conectarDeepgram, 1000); // Auto-reconexión si el evento dura todo el día
+            setTimeout(conectarDeepgram, 1000); 
         };
     } catch (error) {
         console.error("Error conectando a Deepgram:", error);
@@ -69,7 +81,7 @@ async function conectarDeepgram() {
 
 async function inicializarMicrofonoVAD() {
     try {
-        await conectarDeepgram(); // Iniciar el túnel antes de grabar
+        await conectarDeepgram(); 
         
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -79,32 +91,55 @@ async function inicializarMicrofonoVAD() {
         microphone = audioContext.createMediaStreamSource(stream);
         microphone.connect(analyser);
 
-        // AHORA NO ENVIAMOS TODO AL FINAL, ENVIAMOS EN TIEMPO REAL
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         
         mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1) {
-                deepgramSocket.send(event.data); // Enviar trozo de audio en milisegundos
+            // Enviamos audio continuo, excepto cuando el Avatar habla (para evitar eco)
+            if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1 && !avatarHablando) {
+                deepgramSocket.send(event.data); 
             }
         };
 
-        mediaRecorder.onstop = async () => {
-            console.log("🗣️ Frase terminada. Transcripción lista:", transcripcionAcumulada);
-            await enviarTextoAlCerebro(transcripcionAcumulada);
-            transcripcionAcumulada = ""; // Limpiamos para la siguiente persona
-        };
-
+        // Arrancamos el grabador una sola vez, emitiendo trozos cada 250ms
+        mediaRecorder.start(250); 
+        
+        console.log("🎤 Micrófono encendido y conectado en tiempo real.");
         calibrarRuidoAmbiente();
 
     } catch (err) {
-        console.error("Error micrófono:", err);
+        console.error("Error al acceder al micrófono:", err);
     }
 }
 
-// ... (MANTÉN TU FUNCIÓN calibrarRuidoAmbiente() EXACTAMENTE IGUAL AQUÍ) ...
-// ... (MANTÉN TU FUNCIÓN monitorearVolumen() EXACTAMENTE IGUAL AQUÍ, 
-//      pero recuerda que adentro hace mediaRecorder.start(250) en vez de start()... 
-//      Espera, vamos a actualizarla rápido aquí abajo:)
+function calibrarRuidoAmbiente() {
+    isCalibrating = true;
+    console.log("⚙️ Calibrando ruido de fondo del evento...");
+    
+    let totalVolume = 0;
+    let sampleCount = 0;
+    
+    const calibracionInterval = setInterval(() => {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
+        
+        totalVolume += (sum / dataArray.length);
+        sampleCount++;
+    }, 100); 
+
+    setTimeout(() => {
+        clearInterval(calibracionInterval);
+        baseNoiseFloor = totalVolume / sampleCount;
+        dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
+        
+        isCalibrating = false;
+        console.log(`✅ Calibración lista. Umbral de voz: ${dynamicVolumeThreshold.toFixed(2)}`);
+        
+        monitorearVolumen();
+    }, 3000);
+}
 
 function monitorearVolumen() {
     if (isCalibrating || avatarHablando) {
@@ -121,11 +156,9 @@ function monitorearVolumen() {
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
         
-        if (!isRecording) {
-            console.log(`🎙️ Grabando y transmitiendo en vivo...`);
-            isRecording = true;
-            // ¡IMPORTANTE! Enviamos cortes cada 250ms a Deepgram
-            mediaRecorder.start(250); 
+        if (!isUserSpeaking) {
+            console.log(`🎙️ Voz humana detectada. Capturando frase...`);
+            isUserSpeaking = true;
         }
         
         if (silenceTimer) {
@@ -133,11 +166,17 @@ function monitorearVolumen() {
             silenceTimer = null;
         }
     } else {
-        if (isRecording && !silenceTimer) {
+        if (isUserSpeaking && !silenceTimer) {
             silenceTimer = setTimeout(() => {
-                isRecording = false;
-                mediaRecorder.stop();
+                isUserSpeaking = false;
                 silenceTimer = null;
+                
+                // Si hay texto acumulado tras la pausa de 600ms, ¡Disparamos!
+                if (transcripcionAcumulada.trim() !== "") {
+                    console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
+                    enviarTextoAlCerebro(transcripcionAcumulada);
+                    transcripcionAcumulada = ""; // Limpiamos para la siguiente oración
+                }
             }, SILENCE_DURATION);
         }
     }
@@ -145,15 +184,12 @@ function monitorearVolumen() {
 }
 
 // ==========================================
-// 3. CONEXIÓN BTL DE BAJA LATENCIA (JSON + TTFB)
+// 3. COMUNICACIÓN JSON Y REPRODUCCIÓN (TTFB)
 // ==========================================
 async function enviarTextoAlCerebro(textoUsuario) {
-    if (!textoUsuario || textoUsuario.trim() === "") return;
-    
     try {
-        console.log("🧠 1. Enviando solo texto a OpenAI...");
+        console.log("🧠 Pensando respuesta para:", textoUsuario);
         
-        // Ahora enviamos JSON, ¡cero peso de audio!
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -163,7 +199,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (!respuestaChat.ok) throw new Error("Error en el servidor de IA");
         const data = await respuestaChat.json();
         
-        console.log("🤖 IA responde (Texto):", data.text);
+        console.log("🤖 IA responde:", data.text);
         
         avatarHablando = true; 
         const reproductor = new Audio();
@@ -174,6 +210,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
         reproductor.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
+            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
         };
 
     } catch (error) {
@@ -183,22 +220,16 @@ async function enviarTextoAlCerebro(textoUsuario) {
 }
 
 // ==========================================
-// 4. INICIO DEL SISTEMA (Requisito de Navegadores)
+// 4. ARRANQUE DEL SISTEMA
 // ==========================================
-// Agrega un botón en tu HTML con id="btnIniciar" para arrancar el tótem
 document.addEventListener('DOMContentLoaded', () => {
     const btnIniciar = document.getElementById('btnIniciar');
-    
     if (btnIniciar) {
         btnIniciar.addEventListener('click', () => {
-            // Ocultamos el botón tras presionarlo
             btnIniciar.style.display = 'none'; 
             console.log("🚀 Iniciando sistema Jungle...");
-            
             inicializarMicrofonoVAD();
             resetearTemporizador();
         });
-    } else {
-        console.warn("⚠️ No se encontró un botón con id='btnIniciar'. Crea uno en tu HTML para arrancar el audio.");
     }
 });
