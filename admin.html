@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jungle CMS - Panel de Producción</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #111827; color: white; padding: 20px; }
+        .container { max-width: 500px; margin: auto; background: #1f2937; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        h1 { color: #10b981; margin-top: 0; }
+        label { display: block; margin: 15px 0 5px; font-weight: bold; color: #9ca3af; }
+        input[type="file"], textarea { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #374151; background: #111827; color: white; box-sizing: border-box; }
+        button { width: 100%; padding: 15px; margin-top: 20px; border-radius: 8px; border: none; background: #10b981; color: #111827; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #059669; color: white; }
+        button:disabled { background: #374151; color: #9ca3af; cursor: not-allowed; }
+        #estado { text-align: center; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Jungle CMS 🦁</h1>
+        <p>Sube la foto de la pauta del cliente y la IA actualizará el cerebro del avatar en segundos.</p>
+
+        <label>📸 Foto de la pauta (o captura de pantalla):</label>
+        <input type="file" id="archivoFoto" accept="image/*">
+        
+        <label>📝 O pega el texto directamente:</label>
+        <textarea id="textoPauta" rows="5" placeholder="Pegar pauta aquí si no tienes foto..."></textarea>
+        
+        <button id="btnProcesar" onclick="enviarPauta()">Actualizar Cerebro del Avatar</button>
+        <div id="estado"></div>
+    </div>
+
+    <script>
+        async function enviarPauta() {
+            const fileInput = document.getElementById('archivoFoto');
+            const textoInput = document.getElementById('textoPauta').value;
+            const btn = document.getElementById('btnProcesar');
+            const estado = document.getElementById('estado');
+            
+            btn.disabled = true;
+            estado.style.color = '#fbbf24';
+            estado.innerText = "Pensando y leyendo la pauta (toma unos segundos)...";
+
+            let payload = {};
+
+            // Si subieron foto, la convertimos a código (Base64)
+            if (fileInput.files.length > 0) {
+                const reader = new FileReader();
+                reader.onloadend = async () => {
+                    payload.imageBase64 = reader.result.split(',')[1];
+                    realizarPeticion(payload, btn, estado);
+                };
+                reader.readAsDataURL(fileInput.files[0]);
+            } else if (textoInput.trim() !== "") {
+                payload.textInput = textoInput;
+                realizarPeticion(payload, btn, estado);
+            } else {
+                estado.innerText = "Por favor sube una foto o escribe algo.";
+                btn.disabled = false;
+            }
+        }
+
+        async function realizarPeticion(payload, btn, estado) {
+            try {
+                const res = await fetch('/api/process-pauta', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const data = await res.json();
+                
+                if (data.success) {
+                    estado.style.color = '#10b981';
+                    estado.innerText = "¡Mente del Avatar Actualizada con Éxito! ✅";
+                    document.getElementById('archivoFoto').value = '';
+                } else {
+                    estado.style.color = '#ef4444';
+                    estado.innerText = "Error: " + data.error;
+                }
+            } catch (error) {
+                estado.style.color = '#ef4444';
+                estado.innerText = "Error de conexión.";
+            }
+            btn.disabled = false;
+        }
+    </script>
+</body>
+</html>
