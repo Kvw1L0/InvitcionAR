@@ -6,7 +6,6 @@ import { getFirestore } from 'firebase-admin/firestore';
 // 1. INICIALIZACIÓN DE FIREBASE ADMIN (Entorno Seguro)
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
-// Nos aseguramos de guardar la 'app' en una variable
 let app;
 if (!getApps().length) {
     app = initializeApp({
@@ -15,8 +14,6 @@ if (!getApps().length) {
 } else {
     app = getApp();
 }
-
-// EL TOQUE FINAL: Le pasamos la 'app' primero, y el ID de tu base de datos después
 const db = getFirestore(app, 'eventos');
 
 // Función auxiliar para capturar el flujo de datos del audio
@@ -31,14 +28,13 @@ async function getRawBody(req) {
 // Función para obtener la pauta del evento desde Firestore
 async function obtenerDatosEvento() {
     try {
-        // Apunta directamente a tu colección y al ID de tu documento
         const docRef = db.collection('eventos').doc('OCzI3LihKgPtbDdj1HpU');
         const doc = await docRef.get();
         
         if (doc.exists) {
             return doc.data();
         }
-        console.log("No se encontró el documento, usando datos por defecto.");
+        console.log("No se encontró el documento en la base de datos.");
         return null;
     } catch (error) {
         console.error("Error al leer Firestore:", error.message);
@@ -56,7 +52,7 @@ export default async function handler(req, res) {
         const audioBuffer = await getRawBody(req);
         if (audioBuffer.length === 0) throw new Error("El archivo de audio está vacío");
 
-        // 2. Transcripción con Deepgram (Configurado en Español y modelo rápido Nova-2)
+        // 2. Transcripción con Deepgram (Español / Nova-2)
         const deepgramUrl = 'https://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true';
         const deepgram = await axios.post(deepgramUrl, audioBuffer, {
             headers: { 
@@ -68,18 +64,41 @@ export default async function handler(req, res) {
         const userText = deepgram.data.results.channels[0].alternatives[0].transcript;
         console.log("Usuario dijo:", userText);
 
-        // 3. Obtener el contexto dinámico del evento desde Firestore
+        // 3. OBTENER TIEMPO REAL EN CHILE
+        const ahora = new Date();
+        const opcionesFecha = { timeZone: 'America/Santiago', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+        const opcionesHora = { timeZone: 'America/Santiago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+        
+        const fechaChile = ahora.toLocaleDateString('es-CL', opcionesFecha);
+        const horaChile = ahora.toLocaleTimeString('es-CL', opcionesHora);
+
+        // 4. Obtener el contexto dinámico del evento desde Firestore
         const datosEvento = await obtenerDatosEvento();
         
-        // Construcción de la pauta dinámica para el sistema
-        let pautaSistema = "Eres el co-animador de Jungle. Enérgico, breve (máx 2 frases), experto y cercano.";
+        // 5. CONSTRUCCIÓN DEL SYSTEM PROMPT ROBUSTO
+        let pautaSistema = `Eres el co-animador e inteligencia central de Jungle. Tu estilo es enérgico, cercano, sumamente profesional pero lúdico. 
+        Tus respuestas deben ser ultra-breves (máximo 2 frases cortas) para mantener la dinámica del evento viva y no aburrir al usuario.
+        
+        INFORMACIÓN CRUCIAL DE TIEMPO REAL:
+        - Fecha de hoy: ${fechaChile}
+        - Hora exacta actual: ${horaChile}
+        
+        Usa esta hora exacta para calcular matemáticamente qué bloque del cronograma está activo o cuál viene a continuación si el usuario te lo pregunta.`;
+
         if (datosEvento) {
-            pautaSistema += ` Actualmente estás en el evento: "${datosEvento.nombreEvento}". `;
-            pautaSistema += `Descripción del entorno: ${datosEvento.descripcion}. `;
-            pautaSistema += `Tus instrucciones para interactuar con el público hoy: ${datosEvento.instrucciones}.`;
+            pautaSistema += `\n\nESTÁS EN EL EVENTO: "${datosEvento.nombreEvento || 'Activación Jungle'}".`;
+            
+            // Si existe el campo tradicional de instrucciones individuales
+            if (datosEvento.descripcion) pautaSistema += `\nDescripción general: ${datosEvento.descripcion}`;
+            if (datosEvento.instrucciones) pautaSistema += `\nObjetivos del día: ${datosEvento.instrucciones}`;
+            
+            // NUEVO: Soporte para pauta masiva en texto plano o Markdown
+            if (datosEvento.pautaCompleta) {
+                pautaSistema += `\n\nCRONOGRAMA Y PAUTA COMPLETA DEL EVENTO:\n---\n${datosEvento.pautaCompleta}\n---`;
+            }
         }
 
-        // 4. Pensamiento con OpenAI (Inyectando el contexto de Firebase)
+        // 6. Pensamiento con OpenAI
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
         const chat = await openai.chat.completions.create({
             model: "gpt-4o-mini",
@@ -91,14 +110,14 @@ export default async function handler(req, res) {
         const aiText = chat.choices[0].message.content;
         console.log("IA responde:", aiText);
 
-        // 5. Síntesis de voz con ElevenLabs (Modelo Flash / Turbo de baja latencia)
+        // 7. Síntesis de voz con ElevenLabs (Flash / Turbo)
         const voiceResponse = await axios.post(
             `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream`,
             { text: aiText, model_id: "eleven_turbo_v2_5" },
             { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'arraybuffer' }
         );
 
-        // 6. Enviar audio de vuelta al navegador
+        // 8. Enviar audio de vuelta al navegador
         res.setHeader('Content-Type', 'audio/mpeg');
         res.send(Buffer.from(voiceResponse.data));
 
