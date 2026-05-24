@@ -43,12 +43,19 @@ async function conectarDeepgram() {
         const res = await fetch('/api/deepgram-token');
         const data = await res.json();
         
-        // FIX 1: Agregamos mimetype=audio/webm a la URL para que no rechace el audio
         const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&mimetype=audio/webm';
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         
         deepgramSocket.onopen = () => {
             console.log("⚡ Conexión en vivo con Deepgram establecida.");
+            
+            // FIX CLAVE 1: Si el micrófono estaba apagado por una desconexión, lo volvemos a encender
+            // para que genere un nuevo encabezado WebM fresco.
+            if (mediaRecorder && mediaRecorder.state === 'inactive') {
+                mediaRecorder.start(250);
+            }
+            
+            // Latido para mantener vivo el socket
             setInterval(() => {
                 if (deepgramSocket.readyState === 1) {
                     deepgramSocket.send(JSON.stringify({ type: "KeepAlive" }));
@@ -59,10 +66,11 @@ async function conectarDeepgram() {
         deepgramSocket.onmessage = (message) => {
             const respuesta = JSON.parse(message.data);
             
-            // FIX 2: Solo guardamos la palabra cuando Deepgram confirma que es la versión final
             if (respuesta.is_final && respuesta.channel && respuesta.channel.alternatives[0].transcript) {
                 const texto = respuesta.channel.alternatives[0].transcript.trim();
-                if (texto !== "") {
+                
+                // FIX CLAVE 2: Filtramos aquí. Si el avatar está hablando, ignoramos el texto.
+                if (texto !== "" && isUserSpeaking && !avatarHablando) {
                     transcripcionAcumulada += texto + " ";
                     console.log("📝 Escuchando:", transcripcionAcumulada);
                 }
@@ -70,7 +78,11 @@ async function conectarDeepgram() {
         };
 
         deepgramSocket.onclose = () => {
-            console.log("⚠️ Deepgram desconectado. Reconectando en 1s...");
+            console.log("⚠️ Deepgram desconectado. Reiniciando grabador y reconectando...");
+            // Apagamos el grabador viejo para destruir el flujo corrupto
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
             setTimeout(conectarDeepgram, 1000); 
         };
     } catch (error) {
@@ -90,11 +102,12 @@ async function inicializarMicrofonoVAD() {
         microphone = audioContext.createMediaStreamSource(stream);
         microphone.connect(analyser);
 
-        // Aseguramos que el navegador use el formato correcto
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         
         mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1 && !avatarHablando) {
+            // FIX CLAVE 3: Ahora SIEMPRE le enviamos el audio a Deepgram, 
+            // incluso si el avatar habla, para que nunca nos corte la llamada por inactividad.
+            if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1) {
                 deepgramSocket.send(event.data); 
             }
         };
@@ -168,13 +181,11 @@ function monitorearVolumen() {
                 isUserSpeaking = false;
                 silenceTimer = null;
                 
-                // FIX 3: Le damos 400ms extra a Deepgram para que la última palabra llegue por internet
                 setTimeout(() => {
-                    // Si el usuario no volvió a hablar, disparamos
                     if (!isUserSpeaking && transcripcionAcumulada.trim() !== "") {
                         console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
                         enviarTextoAlCerebro(transcripcionAcumulada);
-                        transcripcionAcumulada = ""; // Limpiamos la frase
+                        transcripcionAcumulada = ""; 
                     }
                 }, 400);
 
