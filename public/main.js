@@ -10,16 +10,20 @@ let userId = generarNuevoId();
 let temporizadorInactividad;
 const TIEMPO_ESPERA_MS = 45000; 
 
-// --- Variables 3D (Three.js + Bloom) ---
-let scene, camera, renderer, model, mixer, composer, bloomPass; 
-let controls, clock = new THREE.Clock(); 
+// --- Variables 3D (Three.js + Bloom Dinámico) ---
+let scene, camera, renderer, model, mixer, controls; 
+let clock = new THREE.Clock(); 
 
-let emissiveMaterials = []; // Colección exclusiva para Ojos y Boca
+// Colecciones para el Glow y Lip-Sync Orgánico
+let emissiveMaterials = []; // Solo para el color neón sangrante
+let glowingMeshes = [];     // Solo para la deformación orgánica en su sitio
 
+// RUTA FIREBASE BLINDADA
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c'; 
 
-// --- Variables de Audio VAD/WebSockets ---
+// --- Variables de Audio VAD/WebSockets (El motor rápido que funciona) ---
 let audioContext, analyser, microphone, globalStream, mediaRecorder;
+// ... variables VAD iguales ...
 let isUserSpeaking = false; 
 let silenceTimer = null;
 let isCalibrating = false;
@@ -30,21 +34,24 @@ const SILENCE_DURATION = 600;
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 
-// --- Variables de Audio Playback (Lip-sync) ---
+// --- Variables de Audio Playback (Salida de voz del avatar - Lip-sync) ---
 let avatarHablando = false; 
-let reproductorAnalyser; 
-let dataArrayPlayback;   
+let reproductorAnalyser; // Analizador para medir el volumen de ElevenLabs
+let dataArrayPlayback;   // Array para guardar los datos de frecuencia del playback
+
+// --- Variables de Post-Procesamiento VISUAL (EL CORAZÓN DEL GLOW SANGRIENTO) ---
+let composer, renderPass, bloomPass;
 
 // ==========================================
-// SECCIÓN 1: MOTOR GRÁFICO (BLOOM SELECTIVO Y LUZ METÁLICA)
+// SECCIÓN 1: MOTOR GRÁFICO (THREE.JS + BLOOM SELECTIVO HDR)
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js: Iluminación Frontal y Glow Sangrante...");
+    console.log("⚙️ Inicializando Three.js con Post-Procesamiento Visual...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x05080c); 
+    scene.background = new THREE.Color(0x0a0f18); // Negro Jungle muy oscuro
 
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 3.8); 
@@ -54,29 +61,31 @@ function initThreeJS() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor( 0x000000, 1 ); 
 
-    // NO TONE MAPPING: Para que el metal no se queme con el Bloom
+    // NO TONE MAPPING VITAL: Para que el color rojo sangre puro no se "aplane".
     renderer.outputEncoding = THREE.sRGBEncoding; 
     renderer.toneMapping = THREE.NoToneMapping; 
     container.appendChild(renderer.domElement);
 
-    // FIX CLAVE 1: LUZ FRONTAL POTENTE PARA EL METAL
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // Más luz general
+    // FIX CLAVE 1: ILUMINACIÓN NATURAL Y REFLEJOS METÁLICOS (IGUAL QUE ANTES)
+    // Mantenemos la luz ambiental y direccional fuerte para que el metal se vea genial.
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // Luz base fuerte
     scene.add(ambientLight);
-    
-    const frontLight = new THREE.DirectionalLight(0xffffff, 2.0); // Foco directo a la cara
-    frontLight.position.set(0, 0, 5); // Justo frente al avatar
-    scene.add(frontLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5); // Foco principal
+    directionalLight.position.set(2, 2, 5);
+    scene.add(directionalLight);
 
-    const backLight = new THREE.DirectionalLight(0x88bbff, 1.0); // Reflejo azulado en los bordes
-    backLight.position.set(-5, 3, -5);
-    scene.add(backLight);
-
-    // FIX CLAVE 2: BLOOM UMBRAL ALTO (Threshold = 2.5)
-    bloomPass = new THREE.UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 2.8, 1.2, 2.5 );
+    // CONFIGURACIÓN POST-PROCESAMIENTO: MOTOR DE BLOOM (LAVA/GLOW ROJO SANGRIENTO)
+    renderPass = new THREE.RenderPass(scene, camera);
     
-    composer = new THREE.EffectComposer( renderer );
-    composer.addPass( new THREE.RenderPass( scene, camera ) );
-    composer.addPass( bloomPass );
+    // bloomPass = new THREE.UnrealBloomPass( resolución, fuerza, radio, umbral )
+    // strength (2.8): Mucha fuerza para ese efecto "sangrante".
+    // radius (1.2): Radio amplio de dispersión de luz de lava.
+    // threshold (2.5): Umbral alto para que SOLO los ojos (que pondremos a 15+) sangren.
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.8, 1.2, 2.5);
+    
+    composer = new THREE.EffectComposer(renderer);
+    composer.addPass(renderPass);
+    composer.addPass(bloomPass);
 
     if (typeof THREE.OrbitControls !== 'undefined') {
         controls = new THREE.OrbitControls(camera, renderer.domElement);
@@ -96,7 +105,7 @@ function onWindowResize() {
 }
 
 // ==========================================
-// SECCIÓN 2: CARGADOR DE MODELO (SEPARACIÓN DE MATERIALES)
+// SECCIÓN 2: CARGADOR DE MODELO (TARGETING DE MATERIALES)
 // ==========================================
 
 function loadModel() {
@@ -110,45 +119,49 @@ function loadModel() {
         model.position.set(0, 0, 0); 
 
         emissiveMaterials = [];
+        glowingMeshes = [];
 
+        // TRAVERSAL CLAVE: BÚSQUEDA DE MATERIALES EMISIVOS (Ojos/Boca)
         model.traverse((child) => {
             if (child.isMesh && child.material) {
                 const materials = Array.isArray(child.material) ? child.material : [child.material];
                 
                 materials.forEach(mat => {
-                    const matName = mat.name.toLowerCase();
-                    const meshName = child.name.toLowerCase();
-
-                    // IDENTIFICACIÓN EXACTA: Ojos y Boca
-                    if (matName.includes('ojo') || matName.includes('boca') || meshName.includes('ojo') || meshName.includes('boca')) {
+                    // Si el material tiene textura emisiva (brillo de ojos/boca rojos)
+                    if (mat.emissive && (mat.emissive.r > 0 || mat.emissive.g > 0 || mat.emissive.b > 0)) {
                         
-                        // ROJO PROFUNDO Y SATURADO
+                        // FIX CLAVE 2: ROJO SANGRE PROFUNDO SATURADO (HAL 9000)
                         mat.emissive.setHex(0xff0000);
-                        mat.color.setHex(0x330000); // Base oscura para mantener el rojo vivo
+                        mat.color.setHex(0x220000); // Oscurecemos el color base para evitar el blanco al brillar
                         
-                        // Intensidad pasiva: 15.0
+                        // Intensidad base estable para el Bloom selectivo (mayor a 2.5)
                         mat.emissiveIntensity = 15.0; 
                         
-                        emissiveMaterials.push(mat); 
-                        console.log(`🔥 LED Sangrante Aislado en: ${child.name}`);
+                        // Guardamos referencias globales
+                        emissiveMaterials.push(mat); // Para cambiar color neón
+                        glowingMeshes.push(child); // Para aplicar Lip-Sync orgánico en local center
+                        
+                        // Calculamos el centro geométrico exacto de la malla para la deformación en su sitio
+                        child.geometry.computeBoundingBox();
+                        console.log(`✨ LED Sangrante Aislado en: ${child.name}`);
                     } 
                     else {
-                        // EL CASCO METÁLICO INERTE
+                        // SI NO ES OJO NI BOCA: Nos aseguramos de apagar su emisión
                         mat.emissive.setHex(0x000000); 
-                        mat.emissiveIntensity = 0;
-                        mat.metalness = 1.0;  // Metal puro
-                        mat.roughness = 0.2;  // Más pulido para reflejar la nueva luz frontal
-                        console.log(`🛡️ Metal configurado en: ${child.name}`);
                     }
                 });
             }
         });
 
         scene.add(model);
+        console.log("✅ Modelo 3D cargado correctamente con Ojos encendidos.");
 
+        // Encender animaciones internas del GLB si existen
         if (gltf.animations && gltf.animations.length > 0) {
             mixer = new THREE.AnimationMixer(model);
-            gltf.animations.forEach((clip) => mixer.clipAction(clip).play());
+            gltf.animations.forEach((clip) => {
+                mixer.clipAction(clip).play();
+            });
         }
 
         const overlay = document.getElementById('overlay');
@@ -164,40 +177,64 @@ function animate() {
     requestAnimationFrame(animate);
     
     const delta = clock.getDelta();
-    if (mixer) mixer.update(delta); 
+    if (mixer) mixer.update(delta); // Reproducir animación interna
     if (controls) controls.update(); 
     
+    // Efecto de flotación suave y contínua
     if (model) {
         const time = Date.now() * 0.002;
         model.position.y = Math.sin(time) * 0.15; 
     }
 
-    // FIX CLAVE 3: LIP-SYNC LUMÍNICO (SIN DEFORMAR LA MALLA)
-    // Usamos el volumen para hacer que la *luz* de la boca y los ojos estalle, sin mover la geometría.
+    // FIX CLAVE 3: LIP-SYNC ORGÁNICO EN SU SITIO (Ojos y Boca que palpitan)
+    // Si el avatar está hablando, calculamos la intensidad del brillo en tiempo real.
     if (avatarHablando && reproductorAnalyser && emissiveMaterials.length > 0) {
         reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
         
+        // Calculamos el volumen promedio (Intensidad)
         let sum = 0;
         for (let i = 0; i < dataArrayPlayback.length; i++) {
             sum += dataArrayPlayback[i];
         }
-        const averageVolume = sum / dataArrayPlayback.length; 
+        const averageVolume = sum / dataArrayPlayback.length; // Valor entre 0 y 255
         
-        // Latido del Glow: Base 15.0, sube hasta un salvaje 60.0 con la voz
+        // MAPEADO 1: INTENSIDAD LUMÍNICA (Glow lava sangrante)
+        // Valor base pasivo: 15.0. Estalla hasta 60.0 con la voz (Lip-sync orgánico)
         const dynamicIntensity = 15.0 + (averageVolume * (45.0 / 255.0));
         
-        // Aplicamos el pulso de luz directamente a los materiales
+        // Aplicamos el latido de luz directamente a SOLO ojos y boca
         emissiveMaterials.forEach(mat => mat.emissiveIntensity = dynamicIntensity);
+
+        // MAPEADO 2: DEFORMACIÓN ORGÁNICA EN SU SITIO (TÚ REQUERIMIENTO)
+        // En lugar de mover el modelo hacia abajo, aplicamos una escala procedural programada alrededor de su local center.
+        // Recorremos la colección glowingMeshes que poblamos en el load.
+        glowingMeshes.forEach(mesh => {
+            // Buscamos quirúrgicamente los nombres de Blender para aplicar la deformación orgánica.
+            if (mesh.name.toLowerCase().includes('boca')) {
+                // Abre la boca (estira el eje Y) programáticamente. 
+                // mesh.scaleY = 1.0 (Idle) -> 1.5 (Máximo hablar)
+                const scaleY = 1.0 + (averageVolume * (0.5 / 255.0)); 
+                mesh.scale.set(1, scaleY, 1); 
+                console.log(`🔥 Lip-Sync Orgánico: Deformando Malla Boca (${mesh.name})`);
+            } else if (mesh.name.toLowerCase().includes('ojo')) {
+                // Los ojos también palpitan orgánicamente en su sitio creciendo sutilmente.
+                // mesh.scaleAll = 1.0 (Idle) -> 1.2 (Máximo hablar)
+                const scaleAll = 1.0 + (averageVolume * (0.2 / 255.0));
+                mesh.scale.set(scaleAll, scaleAll, scaleAll);
+                console.log(`🔥 Lip-Sync Orgánico: Deformando Malla Ojo (${mesh.name})`);
+            }
+        });
 
     }
 
+    // Renderizar a través del composer (con Bloom dinámico)
     if (composer) {
         composer.render();
     }
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (IGUAL)
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (ENTRADA MICRÓFONO - IGUAL QUE ANTES)
 // ==========================================
 
 function reiniciarSesionTotem() {
@@ -245,7 +282,9 @@ async function conectarDeepgramYGrabar() {
         deepgramSocket.onclose = () => {
             console.log("⚠️ Deepgram desconectado. Limpiando y reconectando...");
             clearInterval(keepAliveInterval);
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
             setTimeout(conectarDeepgramYGrabar, 1000); 
         };
     } catch (error) {
@@ -257,15 +296,17 @@ async function inicializarMicrofonoVAD() {
     try {
         globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // PREPARAR EL ANALIZADOR DE PLAYBACK (LIP-SYNC)
+        reproductorAnalyser = audioContext.createAnalyser();
+        reproductorAnalyser.fftSize = 256; // Pequeño para velocidad fotograma a fotograma
+        dataArrayPlayback = new Uint8Array(reproductorAnalyser.frequencyBinCount);
+
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.2;
         microphone = audioContext.createMediaStreamSource(globalStream);
         microphone.connect(analyser);
-        
-        reproductorAnalyser = audioContext.createAnalyser();
-        reproductorAnalyser.fftSize = 256; 
-        dataArrayPlayback = new Uint8Array(reproductorAnalyser.frequencyBinCount);
         
         await conectarDeepgramYGrabar(); 
         console.log("🎤 Micrófono encendido y conectado en tiempo real.");
@@ -311,6 +352,7 @@ function monitorearVolumen() {
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
         if (!isUserSpeaking) {
+            console.log(`🎙️ Voz detectada. Capturando frase...`);
             isUserSpeaking = true;
         }
         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
@@ -321,6 +363,7 @@ function monitorearVolumen() {
                 silenceTimer = null;
                 setTimeout(() => {
                     if (!isUserSpeaking && transcripcionAcumulada.trim() !== "") {
+                        console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
                         enviarTextoAlCerebro(transcripcionAcumulada);
                         transcripcionAcumulada = ""; 
                     }
@@ -331,9 +374,13 @@ function monitorearVolumen() {
     requestAnimationFrame(monitorearVolumen);
 }
 
+// ==========================================
+// SECCIÓN 3.5: LÓGICA DE PLAYBACK Y LIP-SYNC ORGÁNICO
+// ==========================================
+
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
-        console.log("🧠 Pensando respuesta...");
+        console.log("🧠 Pensando respuesta para:", textoUsuario);
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -341,37 +388,62 @@ async function enviarTextoAlCerebro(textoUsuario) {
         });
         if (!respuestaChat.ok) throw new Error("Error en el servidor de IA");
         const data = await respuestaChat.json();
+        console.log("🤖 IA responde:", data.text);
         
-        avatarHablando = true; 
-        const reproductor = new Audio();
-        reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
-        reproductor.crossOrigin = "anonymous";
+        avatarHablando = true; // El avatar comienza a hablar
         
-        const fuenteAudio = audioContext.createMediaElementSource(reproductor);
+        // Creamos el elemento Audio nativo
+        const reproductorElement = new Audio();
+        reproductorElement.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
+        reproductorElement.crossOrigin = "anonymous"; // Vital para Firebase/CORS
+        
+        // Creamos el nodo de fuente de audio en el contexto existente
+        const fuenteAudio = audioContext.createMediaElementSource(reproductorElement);
+        
+        // CONEXIÓN CLAVE: fuente -> analizador playback -> parlantes
         fuenteAudio.connect(reproductorAnalyser);
         reproductorAnalyser.connect(audioContext.destination);
         
-        await reproductor.play();
+        console.log("🔥 Lip-Sync Orgánico (Deformación + Glow) activado.");
         
-        reproductor.onended = () => {
-            avatarHablando = false; 
+        await reproductorElement.play();
+        
+        reproductorElement.onended = () => {
+            avatarHablando = false; // El avatar termina de hablar
             resetearTemporizador();
+            
+            // VOLVEMOS AL GLOW BASE (Idle Glow).
             emissiveMaterials.forEach(mat => {
-                mat.emissiveIntensity = 15.0; // Volver al estado base pasivo
+                mat.emissiveIntensity = 15.0; // Volvemos al brillo base
             });
+            
+            // VOLVEMOS A LA GEOMETRÍA ORIGINAL (Idle Pose).
+            glowingMeshes.forEach(mesh => {
+                // Volvemos a la forma original programáticamente alrededor de su local center.
+                mesh.scale.set(1, 1, 1); // Reset scale
+                console.log(`⏹️ Reset Lip-Sync Orgánico: Restableciendo Malla ${mesh.name}`);
+            });
+            
+            console.log("⏹️ Avatar en silencio. Escuchando ambiente... (Intensidad Idle: 15.0)");
         };
     } catch (error) {
         console.error("Error comunicando con Vercel:", error);
         avatarHablando = false;
+        // Si hay error, también reseteamos el glow y la deformación para no quedar pegado.
         emissiveMaterials.forEach(mat => mat.emissiveIntensity = 15.0);
+        glowingMeshes.forEach(mesh => mesh.scale.set(1, 1, 1));
     }
 }
 
+// ==========================================
+// SECCIÓN 4: ARRANQUE DEL SISTEMA (IGUAL QUE ANTES)
+// ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     const btnIniciar = document.getElementById('btnIniciar');
     if (btnIniciar) {
         btnIniciar.addEventListener('click', () => {
             btnIniciar.style.display = 'none'; 
+            console.log("🚀 Iniciando sistema Jungle...");
             initThreeJS();
             loadModel();
             inicializarMicrofonoVAD(); 
