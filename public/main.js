@@ -24,7 +24,7 @@ function resetearTemporizador() {
 // 2. MOTOR VAD + WEBSOCKET DEEPGRAM CONTINUO
 // ==========================================
 let audioContext, analyser, microphone, mediaRecorder;
-let isUserSpeaking = false; // Interruptor lógico
+let isUserSpeaking = false; 
 let silenceTimer = null;
 let isCalibrating = false;
 let avatarHablando = false; 
@@ -32,7 +32,7 @@ let avatarHablando = false;
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
 const SIGNAL_TO_NOISE_MARGIN = 10; 
-const SILENCE_DURATION = 600; // Ultra baja latencia: 600 milisegundos
+const SILENCE_DURATION = 600; 
 
 // Variables de Conexión
 let deepgramSocket;
@@ -43,12 +43,12 @@ async function conectarDeepgram() {
         const res = await fetch('/api/deepgram-token');
         const data = await res.json();
         
-        deepgramSocket = new WebSocket('wss://api.deepgram.com/v1/listen?language=es&model=nova-2', ['token', data.key]);
+        // FIX 1: Agregamos mimetype=audio/webm a la URL para que no rechace el audio
+        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&mimetype=audio/webm';
+        deepgramSocket = new WebSocket(url, ['token', data.key]);
         
         deepgramSocket.onopen = () => {
             console.log("⚡ Conexión en vivo con Deepgram establecida.");
-            
-            // Latido de seguridad: Evita que Deepgram nos desconecte si hay mucho silencio
             setInterval(() => {
                 if (deepgramSocket.readyState === 1) {
                     deepgramSocket.send(JSON.stringify({ type: "KeepAlive" }));
@@ -58,12 +58,11 @@ async function conectarDeepgram() {
         
         deepgramSocket.onmessage = (message) => {
             const respuesta = JSON.parse(message.data);
-            if (respuesta.channel && respuesta.channel.alternatives[0].transcript) {
+            
+            // FIX 2: Solo guardamos la palabra cuando Deepgram confirma que es la versión final
+            if (respuesta.is_final && respuesta.channel && respuesta.channel.alternatives[0].transcript) {
                 const texto = respuesta.channel.alternatives[0].transcript.trim();
-                
-                // LA MAGIA: Deepgram transcribe todo, pero SOLO guardamos el texto 
-                // si nuestra calibración de ruido confirma que hay una persona hablando fuerte.
-                if (isUserSpeaking && texto !== "") {
+                if (texto !== "") {
                     transcripcionAcumulada += texto + " ";
                     console.log("📝 Escuchando:", transcripcionAcumulada);
                 }
@@ -71,7 +70,7 @@ async function conectarDeepgram() {
         };
 
         deepgramSocket.onclose = () => {
-            console.log("Deepgram desconectado. Reconectando en 1s...");
+            console.log("⚠️ Deepgram desconectado. Reconectando en 1s...");
             setTimeout(conectarDeepgram, 1000); 
         };
     } catch (error) {
@@ -91,18 +90,16 @@ async function inicializarMicrofonoVAD() {
         microphone = audioContext.createMediaStreamSource(stream);
         microphone.connect(analyser);
 
+        // Aseguramos que el navegador use el formato correcto
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         
         mediaRecorder.ondataavailable = (event) => {
-            // Enviamos audio continuo, excepto cuando el Avatar habla (para evitar eco)
             if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1 && !avatarHablando) {
                 deepgramSocket.send(event.data); 
             }
         };
 
-        // Arrancamos el grabador una sola vez, emitiendo trozos cada 250ms
         mediaRecorder.start(250); 
-        
         console.log("🎤 Micrófono encendido y conectado en tiempo real.");
         calibrarRuidoAmbiente();
 
@@ -171,13 +168,17 @@ function monitorearVolumen() {
                 isUserSpeaking = false;
                 silenceTimer = null;
                 
-                // Si hay texto acumulado tras la pausa de 600ms, ¡Disparamos!
-                if (transcripcionAcumulada.trim() !== "") {
-                    console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
-                    enviarTextoAlCerebro(transcripcionAcumulada);
-                    transcripcionAcumulada = ""; // Limpiamos para la siguiente oración
-                }
-            }, SILENCE_DURATION);
+                // FIX 3: Le damos 400ms extra a Deepgram para que la última palabra llegue por internet
+                setTimeout(() => {
+                    // Si el usuario no volvió a hablar, disparamos
+                    if (!isUserSpeaking && transcripcionAcumulada.trim() !== "") {
+                        console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
+                        enviarTextoAlCerebro(transcripcionAcumulada);
+                        transcripcionAcumulada = ""; // Limpiamos la frase
+                    }
+                }, 400);
+
+            }, SILENCE_DURATION); 
         }
     }
     requestAnimationFrame(monitorearVolumen);
