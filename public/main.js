@@ -1,186 +1,194 @@
-import * as THREE from 'https://esm.sh/three@0.136.0';
-import { GLTFLoader } from 'https://esm.sh/three@0.136.0/examples/jsm/loaders/GLTFLoader.js';
-import { EffectComposer } from 'https://esm.sh/three@0.136.0/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'https://esm.sh/three@0.136.0/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'https://esm.sh/three@0.136.0/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { RoomEnvironment } from 'https://esm.sh/three@0.136.0/examples/jsm/environments/RoomEnvironment.js';
-
 // ==========================================
-// 1. CONFIGURACIÓN DE ESCENA
+// 1. CONFIGURACIÓN DEL TÓTEM Y MEMORIA
 // ==========================================
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x020000); 
-
-const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 7.5); 
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-document.body.appendChild(renderer.domElement);
-
-const pmremGenerator = new THREE.PMREMGenerator(renderer);
-scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-
-const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); 
-scene.add(ambientLight);
-
-// ==========================================
-// 2. VARIABLES GLOBALES Y AUDIO
-// ==========================================
-let materialBoca, materialOjoDerecho, materialOjoIzquierdo, avatarModel;
-let audioAnalyser = null;
-let dataArray = null;
-let audioContext = null;
-let source = null;
-
-const objetivoRotacion = new THREE.Euler(0, 0, 0);
-const objetivoPosicion = new THREE.Vector3(0, 0, 0);
-
-// ==========================================
-// 3. INTEGRACIÓN CON IA (BACKEND)
-// ==========================================
-function conectarAudioAVisuals(audioElement) {
-    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    if (source) source.disconnect();
-    
-    source = audioContext.createMediaElementSource(audioElement);
-    if (!audioAnalyser) {
-        audioAnalyser = audioContext.createAnalyser();
-        audioAnalyser.fftSize = 256;
-    }
-    source.connect(audioAnalyser);
-    source.connect(audioContext.destination);
-    dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+function generarNuevoId() {
+    return 'totem_user_' + Math.random().toString(36).substr(2, 9);
 }
 
-async function enviarAudioABackend(audioBlob) {
-    console.log("Enviando audio al cerebro Jungle...");
-    const response = await fetch('/api/chat', { method: 'POST', body: audioBlob });
-    
-    if (response.ok) {
-        const audioData = await response.arrayBuffer();
-        const blob = new Blob([audioData], { type: 'audio/mpeg' });
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        
-        conectarAudioAVisuals(audio); 
-        audio.play();
-    } else {
-        console.error("Error en la respuesta del backend");
-    }
+let userId = generarNuevoId();
+let temporizadorInactividad;
+const TIEMPO_ESPERA_MS = 45000; // 45 segundos para resetear la sesión de la persona
+
+function reiniciarSesionTotem() {
+    userId = generarNuevoId();
+    console.log("Sesión reiniciada. Tótem Jungle listo para una nueva persona: " + userId);
+    calibrarRuidoAmbiente();
+    // Aquí puedes activar una animación del avatar en estado "Idle" o de espera
+}
+
+function resetearTemporizador() {
+    clearTimeout(temporizadorInactividad);
+    temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
 }
 
 // ==========================================
-// 4. LÓGICA DE GRABACIÓN
+// 2. MOTOR VAD CON CALIBRACIÓN DINÁMICA
 // ==========================================
-// ==========================================
-// 4. LÓGICA DE GRABACIÓN (PUSH-TO-TALK)
-// ==========================================
+let audioContext;
+let analyser;
+let microphone;
 let mediaRecorder;
 let audioChunks = [];
-let streamIniciado = false;
 
-const btnStart = document.createElement('button');
-btnStart.innerText = "MANTÉN PRESIONADO PARA HABLAR";
-btnStart.style.position = 'absolute';
-btnStart.style.top = '80%'; // Lo bajé un poco para que no tape la cara del avatar
-btnStart.style.left = '50%';
-btnStart.style.transform = 'translate(-50%, -50%)';
-btnStart.style.padding = '20px 40px';
-btnStart.style.cursor = 'pointer';
-btnStart.style.zIndex = '100';
-btnStart.style.userSelect = 'none'; // Evita que el texto se seleccione en móviles
-document.body.appendChild(btnStart);
+let isRecording = false;
+let silenceTimer = null;
+let isCalibrating = false;
 
-// Función para inicializar el micrófono una sola vez
-async function prepararMicrofono() {
-    if (!streamIniciado) {
+// Variables dinámicas (ya no son constantes fijas)
+let baseNoiseFloor = 0; 
+let dynamicVolumeThreshold = 15; 
+const SIGNAL_TO_NOISE_MARGIN = 10; // Qué tan fuerte debe hablar la persona por sobre el ruido
+const SILENCE_DURATION = 1500; // Milisegundos de silencio para cortar
+
+async function inicializarMicrofonoVAD() {
+    try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
         
-        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
-        mediaRecorder.onstop = () => {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.2; // Un poco más de suavizado para el ruido
+        
+        microphone = audioContext.createMediaStreamSource(stream);
+        microphone.connect(analyser);
+
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = async () => {
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             audioChunks = [];
-            enviarAudioABackend(audioBlob);
+            await enviarAudioAlCerebro(audioBlob);
         };
-        streamIniciado = true;
+
+        console.log("🎤 Micrófono encendido.");
+        
+        // Antes de escuchar a la gente, calibramos el ruido de la sala
+        calibrarRuidoAmbiente();
+
+    } catch (err) {
+        console.error("Error al acceder al micrófono:", err);
     }
 }
 
-// Eventos al PRESIONAR (Mouse y Táctil)
-const iniciarGrabacion = async (e) => {
-    e.preventDefault(); // Evita comportamientos raros en móviles
-    await prepararMicrofono();
-    if (mediaRecorder.state === 'inactive') {
-        mediaRecorder.start();
-        btnStart.innerText = "ESCUCHANDO... (Habla ahora)";
-        btnStart.style.backgroundColor = "#ff4444"; // Cambio visual para que sepan que graba
-        btnStart.style.color = "white";
-    }
-};
+// Función para medir el ruido de fondo durante 3 segundos
+function calibrarRuidoAmbiente() {
+    isCalibrating = true;
+    console.log("⚙️ Calibrando ruido de fondo... (Mantener silencio relativo)");
+    
+    let totalVolume = 0;
+    let sampleCount = 0;
+    
+    // Tomamos muestras durante 3 segundos
+    const calibracionInterval = setInterval(() => {
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
+        
+        totalVolume += (sum / dataArray.length);
+        sampleCount++;
+    }, 100); // 10 muestras por segundo
 
-// Eventos al SOLTAR (Mouse y Táctil)
-const detenerGrabacion = (e) => {
-    e.preventDefault();
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
-        btnStart.innerText = "PROCESANDO RESPUESTA...";
-        btnStart.style.backgroundColor = ""; // Vuelve al color original
-        btnStart.style.color = "";
-    }
-};
+    setTimeout(() => {
+        clearInterval(calibracionInterval);
+        
+        // Calcular el promedio del ruido del evento
+        baseNoiseFloor = totalVolume / sampleCount;
+        
+        // El nuevo umbral para empezar a grabar es el ruido ambiente + el margen para la voz
+        dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
+        
+        isCalibrating = false;
+        console.log(`✅ Calibración lista. Ruido base: ${baseNoiseFloor.toFixed(2)} | Umbral de voz: ${dynamicVolumeThreshold.toFixed(2)}`);
+        
+        // Ahora sí, empezamos a monitorear la voz
+        monitorearVolumen();
+    }, 3000);
+}
 
-// Asignar los eventos
-btnStart.addEventListener('mousedown', iniciarGrabacion);
-btnStart.addEventListener('touchstart', iniciarGrabacion, { passive: false });
+// Bucle de monitoreo en tiempo real
+function monitorearVolumen() {
+    if (isCalibrating) return; // Si está calibrando, no grabar a nadie
 
-btnStart.addEventListener('mouseup', detenerGrabacion);
-btnStart.addEventListener('touchend', detenerGrabacion, { passive: false });
-btnStart.addEventListener('mouseleave', detenerGrabacion); // Por si el usuario arrastra el dedo fuera del botón
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    analyser.getByteFrequencyData(dataArray);
 
-// ==========================================
-// 5. CARGA DE MODELO (FIREBASE)
-// ==========================================
-const urlModelo = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=1b020122-46cf-43dd-aadc-c3676760ba1f';
-new GLTFLoader().load(urlModelo, (gltf) => {
-    avatarModel = gltf.scene; 
-    scene.add(avatarModel);
-    avatarModel.traverse((child) => {
-        if (child.isMesh) {
-            const name = child.name.toLowerCase();
-            if (name.includes('boca')) materialBoca = child.material;
-            if (name.includes('ojo')) child.material.emissiveIntensity = 20.0;
+    let sum = 0;
+    for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
+    const averageVolume = sum / dataArray.length;
+
+    // Lógica de detección usando el UMBRAL DINÁMICO
+    if (averageVolume > dynamicVolumeThreshold) {
+        resetearTemporizador(); 
+        
+        if (!isRecording) {
+            console.log(`🗣️ Voz detectada (Vol: ${averageVolume.toFixed(2)} > Umbral: ${dynamicVolumeThreshold.toFixed(2)})`);
+            isRecording = true;
+            mediaRecorder.start();
         }
-    });
-});
-
-// ==========================================
-// 6. BUCLE ANIMACIÓN
-// ==========================================
-const composer = new EffectComposer(renderer);
-composer.addPass(new RenderPass(scene, camera));
-composer.addPass(new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 1.0, 0.95));
-
-const clock = new THREE.Clock();
-function animate() {
-    requestAnimationFrame(animate);
-    const time = clock.getElapsedTime();
-
-    if (audioAnalyser && dataArray && materialBoca) {
-        audioAnalyser.getByteFrequencyData(dataArray);
-        let sum = dataArray.reduce((a, b) => a + b, 0);
-        let promedio = sum / dataArray.length;
-        materialBoca.emissiveIntensity = THREE.MathUtils.lerp(materialBoca.emissiveIntensity, 1.0 + (promedio / 255) * 40.0, 0.3);
+        
+        if (silenceTimer) {
+            clearTimeout(silenceTimer);
+            silenceTimer = null;
+        }
+    } else {
+        if (isRecording && !silenceTimer) {
+            silenceTimer = setTimeout(() => {
+                console.log("🤫 Silencio. Procesando...");
+                isRecording = false;
+                mediaRecorder.stop();
+                silenceTimer = null;
+            }, SILENCE_DURATION);
+        }
     }
 
-    if (avatarModel) {
-        avatarModel.rotation.y = Math.sin(time * 0.5) * 0.2;
-        avatarModel.position.y = Math.sin(time * 1.5) * 0.05;
-    }
-
-    composer.render();
+    requestAnimationFrame(monitorearVolumen);
 }
-animate();
+
+// ==========================================
+// 3. CONEXIÓN CON EL BACKEND Y AVATAR
+// ==========================================
+async function enviarAudioAlCerebro(audioBlob) {
+    try {
+        // Mostrar indicador visual de "Pensando..."
+        console.log("Enviando audio a Vercel...");
+        
+        const respuesta = await fetch(`/api/chat?userId=${userId}`, {
+            method: 'POST',
+            body: audioBlob
+        });
+
+        if (!respuesta.ok) throw new Error("Error en el servidor");
+
+        // Recibir el audio generado por ElevenLabs
+        const audioBuffer = await respuesta.arrayBuffer();
+        const blob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+        const urlAudio = URL.createObjectURL(blob);
+        
+        // Reproducir el audio (Y aquí sincronizarías las animaciones de tu modelo 3D)
+        const reproductor = new Audio(urlAudio);
+        reproductor.play();
+        
+        reproductor.onended = () => {
+            console.log("Avatar terminó de hablar. Listo para escuchar nuevamente.");
+            // Aquí el avatar vuelve a su pose de descanso
+        };
+
+    } catch (error) {
+        console.error("Error al procesar la respuesta:", error);
+    }
+}
+
+// Iniciar todo el sistema al cargar la página (o al presionar un botón de "Iniciar Experiencia")
+document.addEventListener('DOMContentLoaded', () => {
+    // Por políticas de navegadores, a veces es necesario que el usuario haga 
+    // un primer clic en la pantalla antes de poder activar el micrófono.
+    // Puedes atar inicializarMicrofonoVAD() a un botón de "Comenzar".
+    inicializarMicrofonoVAD(); 
+    resetearTemporizador();
+});
