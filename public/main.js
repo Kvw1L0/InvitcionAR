@@ -15,7 +15,6 @@ let scene, camera, renderer, model, mixer, composer, bloomPass;
 let controls, clock = new THREE.Clock(); 
 
 let emissiveMaterials = []; // Colección exclusiva para Ojos y Boca
-let glowingMeshes = [];     // Colección para deformar (Lip-Sync orgánico)
 
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c'; 
 
@@ -37,15 +36,15 @@ let reproductorAnalyser;
 let dataArrayPlayback;   
 
 // ==========================================
-// SECCIÓN 1: MOTOR GRÁFICO (BLOOM SELECTIVO MATEMÁTICO)
+// SECCIÓN 1: MOTOR GRÁFICO (BLOOM SELECTIVO Y LUZ METÁLICA)
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js: Targeting de Luces Estricto...");
+    console.log("⚙️ Inicializando Three.js: Iluminación Frontal y Glow Sangrante...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x05080c); // Fondo muy oscuro
+    scene.background = new THREE.Color(0x05080c); 
 
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 3.8); 
@@ -55,28 +54,25 @@ function initThreeJS() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor( 0x000000, 1 ); 
 
-    // FIX CLAVE 1: APAGAR EL TONE MAPPING APLANADOR
-    // Al usar NoToneMapping, los valores de luz reales se mantienen.
+    // NO TONE MAPPING: Para que el metal no se queme con el Bloom
     renderer.outputEncoding = THREE.sRGBEncoding; 
     renderer.toneMapping = THREE.NoToneMapping; 
     container.appendChild(renderer.domElement);
 
-    // ILUMINACIÓN NATURAL DEL METAL
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); 
+    // FIX CLAVE 1: LUZ FRONTAL POTENTE PARA EL METAL
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // Más luz general
     scene.add(ambientLight);
     
-    const mainLight = new THREE.DirectionalLight(0xffffff, 1.2); 
-    mainLight.position.set(2, 4, 5);
-    scene.add(mainLight);
+    const frontLight = new THREE.DirectionalLight(0xffffff, 2.0); // Foco directo a la cara
+    frontLight.position.set(0, 0, 5); // Justo frente al avatar
+    scene.add(frontLight);
 
-    const backLight = new THREE.DirectionalLight(0x88bbff, 0.8); 
+    const backLight = new THREE.DirectionalLight(0x88bbff, 1.0); // Reflejo azulado en los bordes
     backLight.position.set(-5, 3, -5);
     scene.add(backLight);
 
     // FIX CLAVE 2: BLOOM UMBRAL ALTO (Threshold = 2.5)
-    // Con el umbral en 2.5, el metal (que refleja máximo 1.2) NUNCA brillará.
-    // Solo los ojos (que pondremos a 15.0) activarán este efecto.
-    bloomPass = new THREE.UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 2.5, 1.2, 2.5 );
+    bloomPass = new THREE.UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 2.8, 1.2, 2.5 );
     
     composer = new THREE.EffectComposer( renderer );
     composer.addPass( new THREE.RenderPass( scene, camera ) );
@@ -114,7 +110,6 @@ function loadModel() {
         model.position.set(0, 0, 0); 
 
         emissiveMaterials = [];
-        glowingMeshes = [];
 
         model.traverse((child) => {
             if (child.isMesh && child.material) {
@@ -124,29 +119,25 @@ function loadModel() {
                     const matName = mat.name.toLowerCase();
                     const meshName = child.name.toLowerCase();
 
-                    // FIX CLAVE 3: BÚSQUEDA EXACTA DE BLENDER
+                    // IDENTIFICACIÓN EXACTA: Ojos y Boca
                     if (matName.includes('ojo') || matName.includes('boca') || meshName.includes('ojo') || meshName.includes('boca')) {
                         
                         // ROJO PROFUNDO Y SATURADO
                         mat.emissive.setHex(0xff0000);
-                        mat.color.setHex(0x220000); // Oscurecemos el color base para evitar el blanco al brillar
+                        mat.color.setHex(0x330000); // Base oscura para mantener el rojo vivo
                         
-                        // Intensidad brutal (15.0) para superar el umbral del Bloom (2.5)
+                        // Intensidad pasiva: 15.0
                         mat.emissiveIntensity = 15.0; 
                         
                         emissiveMaterials.push(mat); 
-                        glowingMeshes.push(child); 
-                        
-                        child.geometry.computeBoundingBox();
                         console.log(`🔥 LED Sangrante Aislado en: ${child.name}`);
                     } 
                     else {
-                        // FIX CLAVE 4: EL CASCO METÁLICO INERTE
-                        // Apagamos cualquier emisión de luz y potenciamos el look metálico.
+                        // EL CASCO METÁLICO INERTE
                         mat.emissive.setHex(0x000000); 
                         mat.emissiveIntensity = 0;
                         mat.metalness = 1.0;  // Metal puro
-                        mat.roughness = 0.35; // Rugosidad media para reflejos elegantes, no espejados
+                        mat.roughness = 0.2;  // Más pulido para reflejar la nueva luz frontal
                         console.log(`🛡️ Metal configurado en: ${child.name}`);
                     }
                 });
@@ -181,7 +172,8 @@ function animate() {
         model.position.y = Math.sin(time) * 0.15; 
     }
 
-    // LIP-SYNC Y LATIDO EN LOS OJOS
+    // FIX CLAVE 3: LIP-SYNC LUMÍNICO (SIN DEFORMAR LA MALLA)
+    // Usamos el volumen para hacer que la *luz* de la boca y los ojos estalle, sin mover la geometría.
     if (avatarHablando && reproductorAnalyser && emissiveMaterials.length > 0) {
         reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
         
@@ -191,21 +183,12 @@ function animate() {
         }
         const averageVolume = sum / dataArrayPlayback.length; 
         
-        // Latido del Glow: Base 15.0, sube hasta 40.0 con la voz
-        const dynamicIntensity = 15.0 + (averageVolume * (25.0 / 255.0));
+        // Latido del Glow: Base 15.0, sube hasta un salvaje 60.0 con la voz
+        const dynamicIntensity = 15.0 + (averageVolume * (45.0 / 255.0));
+        
+        // Aplicamos el pulso de luz directamente a los materiales
         emissiveMaterials.forEach(mat => mat.emissiveIntensity = dynamicIntensity);
 
-        // Deformación de la boca (se estira al hablar)
-        glowingMeshes.forEach(mesh => {
-            const name = mesh.name.toLowerCase();
-            if (name.includes('boca')) {
-                const scaleY = 1.0 + (averageVolume * (1.5 / 255.0)); 
-                mesh.scale.set(1, scaleY, 1);
-            }
-        });
-
-    } else if (glowingMeshes.length > 0) {
-        glowingMeshes.forEach(mesh => mesh.scale.set(1, 1, 1));
     }
 
     if (composer) {
@@ -262,9 +245,7 @@ async function conectarDeepgramYGrabar() {
         deepgramSocket.onclose = () => {
             console.log("⚠️ Deepgram desconectado. Limpiando y reconectando...");
             clearInterval(keepAliveInterval);
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-            }
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
             setTimeout(conectarDeepgramYGrabar, 1000); 
         };
     } catch (error) {
@@ -352,7 +333,7 @@ function monitorearVolumen() {
 
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
-        console.log("🧠 Pensando respuesta para:", textoUsuario);
+        console.log("🧠 Pensando respuesta...");
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -376,7 +357,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
             avatarHablando = false; 
             resetearTemporizador();
             emissiveMaterials.forEach(mat => {
-                mat.emissiveIntensity = 15.0; // Volver al estado base
+                mat.emissiveIntensity = 15.0; // Volver al estado base pasivo
             });
         };
     } catch (error) {
