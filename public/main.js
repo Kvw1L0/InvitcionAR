@@ -23,89 +23,90 @@ function resetearTemporizador() {
 }
 
 // ==========================================
-// 2. MOTOR VAD CON CALIBRACIÓN DINÁMICA
+// 2. MOTOR VAD + WEBSOCKET DEEPGRAM EN VIVO
 // ==========================================
-let audioContext;
-let analyser;
-let microphone;
-let mediaRecorder;
-let audioChunks = [];
-
+let audioContext, analyser, microphone, mediaRecorder;
 let isRecording = false;
 let silenceTimer = null;
 let isCalibrating = false;
-let avatarHablando = false; // IMPORTANTE: Para que no se escuche a sí mismo
+let avatarHablando = false; 
 
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
 const SIGNAL_TO_NOISE_MARGIN = 10; 
-const SILENCE_DURATION = 1500; 
+const SILENCE_DURATION = 600; // ¡Reducido a 600ms para latencia extrema!
+
+// Variables del WebSocket
+let deepgramSocket;
+let transcripcionAcumulada = "";
+
+async function conectarDeepgram() {
+    try {
+        const res = await fetch('/api/deepgram-token');
+        const data = await res.json();
+        
+        // Abrimos el WebSocket nativo del navegador directo a Deepgram
+        deepgramSocket = new WebSocket('wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true', ['token', data.key]);
+        
+        deepgramSocket.onopen = () => console.log("⚡ Conexión en vivo con Deepgram establecida.");
+        
+        deepgramSocket.onmessage = (message) => {
+            const respuesta = JSON.parse(message.data);
+            if (respuesta.is_final && respuesta.channel.alternatives[0].transcript) {
+                // Vamos guardando las palabras mientras la persona habla
+                transcripcionAcumulada += respuesta.channel.alternatives[0].transcript + " ";
+            }
+        };
+
+        deepgramSocket.onclose = () => {
+            console.log("Deepgram desconectado. Reconectando en 1s...");
+            setTimeout(conectarDeepgram, 1000); // Auto-reconexión si el evento dura todo el día
+        };
+    } catch (error) {
+        console.error("Error conectando a Deepgram:", error);
+    }
+}
 
 async function inicializarMicrofonoVAD() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        await conectarDeepgram(); // Iniciar el túnel antes de grabar
         
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.2;
-        
         microphone = audioContext.createMediaStreamSource(stream);
         microphone.connect(analyser);
 
+        // AHORA NO ENVIAMOS TODO AL FINAL, ENVIAMOS EN TIEMPO REAL
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
         
         mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) audioChunks.push(event.data);
+            if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1) {
+                deepgramSocket.send(event.data); // Enviar trozo de audio en milisegundos
+            }
         };
 
         mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            audioChunks = [];
-            await enviarAudioAlCerebro(audioBlob);
+            console.log("🗣️ Frase terminada. Transcripción lista:", transcripcionAcumulada);
+            await enviarTextoAlCerebro(transcripcionAcumulada);
+            transcripcionAcumulada = ""; // Limpiamos para la siguiente persona
         };
 
-        console.log("🎤 Micrófono encendido y conectado.");
         calibrarRuidoAmbiente();
 
     } catch (err) {
-        console.error("Error al acceder al micrófono:", err);
-        alert("Por favor permite el acceso al micrófono para interactuar.");
+        console.error("Error micrófono:", err);
     }
 }
 
-function calibrarRuidoAmbiente() {
-    isCalibrating = true;
-    console.log("⚙️ Calibrando ruido de fondo del evento...");
-    
-    let totalVolume = 0;
-    let sampleCount = 0;
-    
-    const calibracionInterval = setInterval(() => {
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteFrequencyData(dataArray);
-        
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
-        
-        totalVolume += (sum / dataArray.length);
-        sampleCount++;
-    }, 100); 
-
-    setTimeout(() => {
-        clearInterval(calibracionInterval);
-        baseNoiseFloor = totalVolume / sampleCount;
-        dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
-        
-        isCalibrating = false;
-        console.log(`✅ Calibración lista. Ruido base: ${baseNoiseFloor.toFixed(2)} | Umbral de voz: ${dynamicVolumeThreshold.toFixed(2)}`);
-        
-        monitorearVolumen();
-    }, 3000);
-}
+// ... (MANTÉN TU FUNCIÓN calibrarRuidoAmbiente() EXACTAMENTE IGUAL AQUÍ) ...
+// ... (MANTÉN TU FUNCIÓN monitorearVolumen() EXACTAMENTE IGUAL AQUÍ, 
+//      pero recuerda que adentro hace mediaRecorder.start(250) en vez de start()... 
+//      Espera, vamos a actualizarla rápido aquí abajo:)
 
 function monitorearVolumen() {
-    // Si el sistema está calibrando o el avatar está hablando, ignoramos el micrófono
     if (isCalibrating || avatarHablando) {
         requestAnimationFrame(monitorearVolumen);
         return; 
@@ -113,7 +114,6 @@ function monitorearVolumen() {
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
-
     let sum = 0;
     for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
     const averageVolume = sum / dataArray.length;
@@ -122,9 +122,10 @@ function monitorearVolumen() {
         resetearTemporizador(); 
         
         if (!isRecording) {
-            console.log(`🗣️ Voz detectada. Grabando...`);
+            console.log(`🎙️ Grabando y transmitiendo en vivo...`);
             isRecording = true;
-            mediaRecorder.start();
+            // ¡IMPORTANTE! Enviamos cortes cada 250ms a Deepgram
+            mediaRecorder.start(250); 
         }
         
         if (silenceTimer) {
@@ -134,57 +135,50 @@ function monitorearVolumen() {
     } else {
         if (isRecording && !silenceTimer) {
             silenceTimer = setTimeout(() => {
-                console.log("🤫 Silencio de 1.5s. Procesando audio...");
                 isRecording = false;
                 mediaRecorder.stop();
                 silenceTimer = null;
             }, SILENCE_DURATION);
         }
     }
-
     requestAnimationFrame(monitorearVolumen);
 }
 
 // ==========================================
-// 3. CONEXIÓN BTL DE BAJA LATENCIA (TTFB)
+// 3. CONEXIÓN BTL DE BAJA LATENCIA (JSON + TTFB)
 // ==========================================
-async function enviarAudioAlCerebro(audioBlob) {
+async function enviarTextoAlCerebro(textoUsuario) {
+    if (!textoUsuario || textoUsuario.trim() === "") return;
+    
     try {
-        console.log("🧠 1. Enviando audio a transcribir y pensar...");
+        console.log("🧠 1. Enviando solo texto a OpenAI...");
         
-        // Paso 1: Obtener la respuesta en texto súper rápido (chat.js)
+        // Ahora enviamos JSON, ¡cero peso de audio!
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
-            body: audioBlob
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: textoUsuario.trim() })
         });
 
         if (!respuestaChat.ok) throw new Error("Error en el servidor de IA");
         const data = await respuestaChat.json();
         
         console.log("🤖 IA responde (Texto):", data.text);
-        console.log("🔊 2. Abriendo túnel de streaming de voz...");
-
-        // Paso 2: Reproducción en Streaming Nativo (speak.js)
-        avatarHablando = true; // Bloqueamos el micrófono
         
+        avatarHablando = true; 
         const reproductor = new Audio();
-        // Usamos encodeURIComponent para pasar el texto de forma segura por la URL
         reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
         
-        // Aquí puedes disparar la animación de "Avatar Hablando" en Three.js
-        console.log("▶️ Reproduciendo voz en streaming...");
         await reproductor.play();
         
         reproductor.onended = () => {
-            console.log("⏹️ Avatar terminó de hablar. Micrófono abierto nuevamente.");
-            avatarHablando = false; // Desbloqueamos el micrófono
+            avatarHablando = false; 
             resetearTemporizador();
-            // Aquí puedes devolver al avatar a su pose "Idle" en Three.js
         };
 
     } catch (error) {
-        console.error("Error en la tubería de comunicación:", error);
-        avatarHablando = false; // Liberar bloqueo en caso de error
+        console.error("Error comunicando con Vercel:", error);
+        avatarHablando = false;
     }
 }
 
