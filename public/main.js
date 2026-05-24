@@ -7,13 +7,14 @@ function generarNuevoId() {
 
 let userId = generarNuevoId();
 let temporizadorInactividad;
-const TIEMPO_ESPERA_MS = 45000; // 45 segundos para resetear la sesión de la persona
+const TIEMPO_ESPERA_MS = 45000; // 45 segundos para resetear la sesión
 
 function reiniciarSesionTotem() {
     userId = generarNuevoId();
-    console.log("Sesión reiniciada. Tótem Jungle listo para una nueva persona: " + userId);
-    calibrarRuidoAmbiente();
-    // Aquí puedes activar una animación del avatar en estado "Idle" o de espera
+    console.log("🔄 Sesión reiniciada. Tótem listo para una nueva persona: " + userId);
+    // Recalibramos el ruido de fondo por si el evento está más ruidoso ahora
+    calibrarRuidoAmbiente(); 
+    // Aquí puedes disparar una animación 3D de "Idle" o "Esperando"
 }
 
 function resetearTemporizador() {
@@ -33,12 +34,12 @@ let audioChunks = [];
 let isRecording = false;
 let silenceTimer = null;
 let isCalibrating = false;
+let avatarHablando = false; // IMPORTANTE: Para que no se escuche a sí mismo
 
-// Variables dinámicas (ya no son constantes fijas)
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
-const SIGNAL_TO_NOISE_MARGIN = 10; // Qué tan fuerte debe hablar la persona por sobre el ruido
-const SILENCE_DURATION = 1500; // Milisegundos de silencio para cortar
+const SIGNAL_TO_NOISE_MARGIN = 10; 
+const SILENCE_DURATION = 1500; 
 
 async function inicializarMicrofonoVAD() {
     try {
@@ -47,7 +48,7 @@ async function inicializarMicrofonoVAD() {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.2; // Un poco más de suavizado para el ruido
+        analyser.smoothingTimeConstant = 0.2;
         
         microphone = audioContext.createMediaStreamSource(stream);
         microphone.connect(analyser);
@@ -64,25 +65,22 @@ async function inicializarMicrofonoVAD() {
             await enviarAudioAlCerebro(audioBlob);
         };
 
-        console.log("🎤 Micrófono encendido.");
-        
-        // Antes de escuchar a la gente, calibramos el ruido de la sala
+        console.log("🎤 Micrófono encendido y conectado.");
         calibrarRuidoAmbiente();
 
     } catch (err) {
         console.error("Error al acceder al micrófono:", err);
+        alert("Por favor permite el acceso al micrófono para interactuar.");
     }
 }
 
-// Función para medir el ruido de fondo durante 3 segundos
 function calibrarRuidoAmbiente() {
     isCalibrating = true;
-    console.log("⚙️ Calibrando ruido de fondo... (Mantener silencio relativo)");
+    console.log("⚙️ Calibrando ruido de fondo del evento...");
     
     let totalVolume = 0;
     let sampleCount = 0;
     
-    // Tomamos muestras durante 3 segundos
     const calibracionInterval = setInterval(() => {
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteFrequencyData(dataArray);
@@ -92,28 +90,26 @@ function calibrarRuidoAmbiente() {
         
         totalVolume += (sum / dataArray.length);
         sampleCount++;
-    }, 100); // 10 muestras por segundo
+    }, 100); 
 
     setTimeout(() => {
         clearInterval(calibracionInterval);
-        
-        // Calcular el promedio del ruido del evento
         baseNoiseFloor = totalVolume / sampleCount;
-        
-        // El nuevo umbral para empezar a grabar es el ruido ambiente + el margen para la voz
         dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
         
         isCalibrating = false;
         console.log(`✅ Calibración lista. Ruido base: ${baseNoiseFloor.toFixed(2)} | Umbral de voz: ${dynamicVolumeThreshold.toFixed(2)}`);
         
-        // Ahora sí, empezamos a monitorear la voz
         monitorearVolumen();
     }, 3000);
 }
 
-// Bucle de monitoreo en tiempo real
 function monitorearVolumen() {
-    if (isCalibrating) return; // Si está calibrando, no grabar a nadie
+    // Si el sistema está calibrando o el avatar está hablando, ignoramos el micrófono
+    if (isCalibrating || avatarHablando) {
+        requestAnimationFrame(monitorearVolumen);
+        return; 
+    }
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
@@ -122,12 +118,11 @@ function monitorearVolumen() {
     for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
     const averageVolume = sum / dataArray.length;
 
-    // Lógica de detección usando el UMBRAL DINÁMICO
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
         
         if (!isRecording) {
-            console.log(`🗣️ Voz detectada (Vol: ${averageVolume.toFixed(2)} > Umbral: ${dynamicVolumeThreshold.toFixed(2)})`);
+            console.log(`🗣️ Voz detectada. Grabando...`);
             isRecording = true;
             mediaRecorder.start();
         }
@@ -139,7 +134,7 @@ function monitorearVolumen() {
     } else {
         if (isRecording && !silenceTimer) {
             silenceTimer = setTimeout(() => {
-                console.log("🤫 Silencio. Procesando...");
+                console.log("🤫 Silencio de 1.5s. Procesando audio...");
                 isRecording = false;
                 mediaRecorder.stop();
                 silenceTimer = null;
@@ -151,44 +146,65 @@ function monitorearVolumen() {
 }
 
 // ==========================================
-// 3. CONEXIÓN CON EL BACKEND Y AVATAR
+// 3. CONEXIÓN BTL DE BAJA LATENCIA (TTFB)
 // ==========================================
 async function enviarAudioAlCerebro(audioBlob) {
     try {
-        // Mostrar indicador visual de "Pensando..."
-        console.log("Enviando audio a Vercel...");
+        console.log("🧠 1. Enviando audio a transcribir y pensar...");
         
-        const respuesta = await fetch(`/api/chat?userId=${userId}`, {
+        // Paso 1: Obtener la respuesta en texto súper rápido (chat.js)
+        const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             body: audioBlob
         });
 
-        if (!respuesta.ok) throw new Error("Error en el servidor");
-
-        // Recibir el audio generado por ElevenLabs
-        const audioBuffer = await respuesta.arrayBuffer();
-        const blob = new Blob([audioBuffer], { type: 'audio/mpeg' });
-        const urlAudio = URL.createObjectURL(blob);
+        if (!respuestaChat.ok) throw new Error("Error en el servidor de IA");
+        const data = await respuestaChat.json();
         
-        // Reproducir el audio (Y aquí sincronizarías las animaciones de tu modelo 3D)
-        const reproductor = new Audio(urlAudio);
-        reproductor.play();
+        console.log("🤖 IA responde (Texto):", data.text);
+        console.log("🔊 2. Abriendo túnel de streaming de voz...");
+
+        // Paso 2: Reproducción en Streaming Nativo (speak.js)
+        avatarHablando = true; // Bloqueamos el micrófono
+        
+        const reproductor = new Audio();
+        // Usamos encodeURIComponent para pasar el texto de forma segura por la URL
+        reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
+        
+        // Aquí puedes disparar la animación de "Avatar Hablando" en Three.js
+        console.log("▶️ Reproduciendo voz en streaming...");
+        await reproductor.play();
         
         reproductor.onended = () => {
-            console.log("Avatar terminó de hablar. Listo para escuchar nuevamente.");
-            // Aquí el avatar vuelve a su pose de descanso
+            console.log("⏹️ Avatar terminó de hablar. Micrófono abierto nuevamente.");
+            avatarHablando = false; // Desbloqueamos el micrófono
+            resetearTemporizador();
+            // Aquí puedes devolver al avatar a su pose "Idle" en Three.js
         };
 
     } catch (error) {
-        console.error("Error al procesar la respuesta:", error);
+        console.error("Error en la tubería de comunicación:", error);
+        avatarHablando = false; // Liberar bloqueo en caso de error
     }
 }
 
-// Iniciar todo el sistema al cargar la página (o al presionar un botón de "Iniciar Experiencia")
+// ==========================================
+// 4. INICIO DEL SISTEMA (Requisito de Navegadores)
+// ==========================================
+// Agrega un botón en tu HTML con id="btnIniciar" para arrancar el tótem
 document.addEventListener('DOMContentLoaded', () => {
-    // Por políticas de navegadores, a veces es necesario que el usuario haga 
-    // un primer clic en la pantalla antes de poder activar el micrófono.
-    // Puedes atar inicializarMicrofonoVAD() a un botón de "Comenzar".
-    inicializarMicrofonoVAD(); 
-    resetearTemporizador();
+    const btnIniciar = document.getElementById('btnIniciar');
+    
+    if (btnIniciar) {
+        btnIniciar.addEventListener('click', () => {
+            // Ocultamos el botón tras presionarlo
+            btnIniciar.style.display = 'none'; 
+            console.log("🚀 Iniciando sistema Jungle...");
+            
+            inicializarMicrofonoVAD();
+            resetearTemporizador();
+        });
+    } else {
+        console.warn("⚠️ No se encontró un botón con id='btnIniciar'. Crea uno en tu HTML para arrancar el audio.");
+    }
 });
