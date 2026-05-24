@@ -2,17 +2,21 @@
 // SECCIÓN 0: VARIABLES GLOBALES (3D + AUDIO)
 // ==========================================
 
-// --- Variables del Tótem/BTL ---
+function generarNuevoId() {
+    return 'totem_user_' + Math.random().toString(36).substr(2, 9);
+}
+
 let userId = generarNuevoId();
 let temporizadorInactividad;
-const TIEMPO_ESPERA_MS = 45000; // 45s de inactividad para resetear
+const TIEMPO_ESPERA_MS = 45000; 
 
 // --- Variables 3D (Three.js) ---
-let scene, camera, renderer, model, mixer; // mixer es para las animaciones futuras
+let scene, camera, renderer, model, mixer; 
 let controls;
-// BUSCA ESTA LÍNEA Y AJUSTA LA RUTA DE TU MODELO GLTF/GLB
-const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/avatar-ia.glb?alt=media&token=541669a6-7baa-43d3-8f7e-4d4c2f07db8e';
-// --- Variables de Audio VAD/WebSockets (El motor que ya funciona) ---
+let clock = new THREE.Clock(); // Necesario para las animaciones del modelo
+const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/avatar-ia.glb?alt=media&token=541669a6-7baa-43d3-8f7e-4d4c2f07db8e'; 
+
+// --- Variables de Audio VAD/WebSockets ---
 let audioContext, analyser, microphone, globalStream, mediaRecorder;
 let isUserSpeaking = false; 
 let silenceTimer = null;
@@ -21,47 +25,49 @@ let avatarHablando = false;
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
 const SIGNAL_TO_NOISE_MARGIN = 10; 
-const SILENCE_DURATION = 600; // Latencia extrema: 600ms de silencio
+const SILENCE_DURATION = 600; 
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 
 // ==========================================
-// SECCIÓN 1: MOTOR GRÁFICO (THREE.JS setup)
+// SECCIÓN 1: MOTOR GRÁFICO (THREE.JS)
 // ==========================================
 
 function initThreeJS() {
     console.log("⚙️ Inicializando Three.js...");
     const container = document.getElementById('threejs-container');
 
-    // 1. Escena y Fondo (coincidiendo con el CSS)
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x111827); 
 
-    // 2. Cámara (Perspectiva estándar para BTL)
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 1.6, 3); // Posición a altura de los ojos (1.6m)
+    // CORRECCIÓN 3D: Cámara centrada en el origen para la cabeza robótica
+    camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 0, 4.5); 
 
-    // 3. Renderizado (con suavizado de bordes/antialias)
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.outputEncoding = THREE.sRGBEncoding; // Colores correctos para GLTF
+    
+    // CORRECCIÓN BRILLO: Activar renderizado HDR para que los ojos rojos brillen (Glow)
+    renderer.outputEncoding = THREE.sRGBEncoding; 
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
     container.appendChild(renderer.domElement);
 
-    // 4. Luces (Asegurando que el modelo se vea bien)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
-    directionalLight.position.set(1, 2, 3);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    directionalLight.position.set(2, 2, 5);
     scene.add(directionalLight);
 
-    // 5. Controles (Para testeo, permite rotar con el mouse)
-    controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enablePan = false; // Solo rotar y zoom
-    controls.target.set(0, 1.4, 0); // Enfocar a la cara
-    controls.update();
+    // Controles apuntando al centro exacto
+    if (typeof THREE.OrbitControls !== 'undefined') {
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enablePan = false; 
+        controls.target.set(0, 0, 0); 
+        controls.update();
+    }
 
-    // Escuchar redimensionado de ventana
     window.addEventListener('resize', onWindowResize, false);
 }
 
@@ -72,49 +78,78 @@ function onWindowResize() {
 }
 
 // ==========================================
-// SECCIÓN 2: CARGADOR DE MODELO (GLTFLoader)
+// SECCIÓN 2: CARGADOR DE MODELO Y ANIMACIÓN
 // ==========================================
 
 function loadModel() {
-    console.log(`⚙️ Cargando modelo 3D desde: ${MODEL_PATH}...`);
+    console.log(`⚙️ Cargando modelo 3D...`);
     const loader = new THREE.GLTFLoader();
 
     loader.load(MODEL_PATH, (gltf) => {
         model = gltf.scene;
-        model.scale.set(1, 1, 1); // Ajustar escala si es necesario
-        model.position.set(0, 0, 0); // En el suelo
+        
+        // Ajustes finos de posición y escala para la cabeza
+        model.scale.set(1, 1, 1); 
+        model.position.set(0, 0, 0); 
+
+        // FORZAR EL BRILLO MÁXIMO EN MATERIALES EMISIVOS
+        model.traverse((child) => {
+            if (child.isMesh && child.material && child.material.emissive) {
+                child.material.emissiveIntensity = 2.5; // Potenciar luces rojas
+            }
+        });
+
         scene.add(model);
         console.log("✅ Modelo 3D cargado correctamente.");
 
-        // Ocultar la pantalla de carga (overlay)
-        document.getElementById('overlay').style.display = 'none';
+        // CORRECCIÓN ANIMACIÓN: Encender las animaciones internas del GLB
+        if (gltf.animations && gltf.animations.length > 0) {
+            mixer = new THREE.AnimationMixer(model);
+            gltf.animations.forEach((clip) => {
+                mixer.clipAction(clip).play();
+            });
+        }
 
-        // Arrancamos el bucle de renderizado
+        const overlay = document.getElementById('overlay');
+        if(overlay) overlay.style.display = 'none';
+
         animate(); 
-
-    }, (xhr) => {
-        // Log opcional de progreso de carga
-        // console.log( (xhr.loaded / xhr.total * 100) + '% cargado' );
-    }, (error) => {
+    }, undefined, (error) => {
         console.error("❌ Error cargando el modelo GLTF:", error);
-        alert(`Error cargando el modelo: ${MODEL_PATH}. Revisa la consola.`);
     });
 }
 
-// Bucle de animación/renderizado
 function animate() {
     requestAnimationFrame(animate);
     
-    if (controls) controls.update(); // Actualizar OrbitControls
-    if (mixer) mixer.update(0.016); // Actualizar animaciones futuras
+    const delta = clock.getDelta();
+    if (mixer) mixer.update(delta); // Reproducir animación interna
+    if (controls) controls.update(); 
+    
+    // CORRECCIÓN MOVIMIENTO: Efecto de flotación suave y contínua
+    if (model) {
+        const time = Date.now() * 0.002;
+        model.position.y = Math.sin(time) * 0.15; // Sube y baja suavemente
+    }
 
     renderer.render(scene, camera);
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO VAD/WEBSOCKET
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS
 // ==========================================
-// (Aquí copiamos tu código funcional de audio tal cual)
+
+// LA FUNCIÓN PERDIDA HA VUELTO
+function reiniciarSesionTotem() {
+    userId = generarNuevoId();
+    console.log("🔄 Sesión reiniciada. Tótem listo para: " + userId);
+    calibrarRuidoAmbiente(); 
+}
+
+function resetearTemporizador() {
+    clearTimeout(temporizadorInactividad);
+    temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
+}
 
 async function conectarDeepgramYGrabar() {
     try {
@@ -125,14 +160,17 @@ async function conectarDeepgramYGrabar() {
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         
         deepgramSocket.onopen = () => {
-            console.log("⚡ Conexión en vivo con Deepgram establecida.");
+            console.log("⚡ Conexión en vivo establecida.");
             mediaRecorder = new MediaRecorder(globalStream, { mimeType: 'audio/webm' });
+            
             mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0 && deepgramSocket.readyState === 1) {
                     deepgramSocket.send(event.data); 
                 }
             };
+            
             mediaRecorder.start(250); 
+            
             keepAliveInterval = setInterval(() => {
                 if (deepgramSocket.readyState === 1) {
                     deepgramSocket.send(JSON.stringify({ type: "KeepAlive" }));
@@ -144,8 +182,7 @@ async function conectarDeepgramYGrabar() {
             const respuesta = JSON.parse(message.data);
             if (respuesta.is_final && respuesta.channel && respuesta.channel.alternatives[0].transcript) {
                 const texto = respuesta.channel.alternatives[0].transcript.trim();
-                // FIX: Filtramos aquí. Si el avatar está hablando, ignoramos el texto.
-                if (texto !== "" && isUserSpeaking && !avatarHablando) {
+                if (texto !== "" && !avatarHablando) {
                     transcripcionAcumulada += texto + " ";
                     console.log("📝 Escuchando:", transcripcionAcumulada);
                 }
@@ -153,9 +190,11 @@ async function conectarDeepgramYGrabar() {
         };
 
         deepgramSocket.onclose = () => {
-            console.log("⚠️ Deepgram desconectado. Reconstruyendo...");
+            console.log("⚠️ Deepgram cerró la conexión. Reconectando...");
             clearInterval(keepAliveInterval);
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
             setTimeout(conectarDeepgramYGrabar, 1000); 
         };
     } catch (error) {
@@ -165,30 +204,30 @@ async function conectarDeepgramYGrabar() {
 
 async function inicializarMicrofonoVAD() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        globalStream = stream; // Guardar flujo global
+        globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.2;
-        microphone = audioContext.createMediaStreamSource(stream);
+        microphone = audioContext.createMediaStreamSource(globalStream);
         microphone.connect(analyser);
 
         await conectarDeepgramYGrabar(); 
-        
         console.log("🎤 Micrófono encendido y conectado en tiempo real.");
         calibrarRuidoAmbiente();
 
     } catch (err) {
-        console.error("Error micrófono:", err);
+        console.error("Error al acceder al micrófono:", err);
     }
 }
 
 function calibrarRuidoAmbiente() {
     isCalibrating = true;
-    console.log("⚙️ Calibrando ruido de fondo...");
+    console.log("⚙️ Calibrando ruido de fondo del evento...");
+    
     let totalVolume = 0;
     let sampleCount = 0;
+    
     const calibracionInterval = setInterval(() => {
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteFrequencyData(dataArray);
@@ -202,8 +241,10 @@ function calibrarRuidoAmbiente() {
         clearInterval(calibracionInterval);
         baseNoiseFloor = totalVolume / sampleCount;
         dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
+        
         isCalibrating = false;
         console.log(`✅ Calibración lista. Umbral de voz: ${dynamicVolumeThreshold.toFixed(2)}`);
+        
         monitorearVolumen();
     }, 3000);
 }
@@ -213,6 +254,7 @@ function monitorearVolumen() {
         requestAnimationFrame(monitorearVolumen);
         return; 
     }
+
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(dataArray);
     let sum = 0;
@@ -221,19 +263,25 @@ function monitorearVolumen() {
 
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
+        
         if (!isUserSpeaking) {
-            console.log(`🎙️ Voz detectada. Capturando phrase...`);
+            console.log(`🎙️ Voz humana detectada. Capturando frase...`);
             isUserSpeaking = true;
         }
-        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+        
+        if (silenceTimer) {
+            clearTimeout(silenceTimer);
+            silenceTimer = null;
+        }
     } else {
         if (isUserSpeaking && !silenceTimer) {
             silenceTimer = setTimeout(() => {
                 isUserSpeaking = false;
                 silenceTimer = null;
+                
                 setTimeout(() => {
                     if (!isUserSpeaking && transcripcionAcumulada.trim() !== "") {
-                        console.log("🚀 Frase terminada. Enviando:", transcripcionAcumulada);
+                        console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
                         enviarTextoAlCerebro(transcripcionAcumulada);
                         transcripcionAcumulada = ""; 
                     }
@@ -246,24 +294,31 @@ function monitorearVolumen() {
 
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
-        console.log("🧠 Pensando:", textoUsuario);
+        console.log("🧠 Pensando respuesta para:", textoUsuario);
+        
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: textoUsuario.trim() })
         });
-        if (!respuestaChat.ok) throw new Error("Error en IA");
+
+        if (!respuestaChat.ok) throw new Error("Error en el servidor de IA");
         const data = await respuestaChat.json();
+        
         console.log("🤖 IA responde:", data.text);
+        
         avatarHablando = true; 
         const reproductor = new Audio();
         reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
+        
         await reproductor.play();
+        
         reproductor.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
-            console.log("⏹️ Avatar terminó. Escuchando ambiente...");
+            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
         };
+
     } catch (error) {
         console.error("Error comunicando con Vercel:", error);
         avatarHablando = false;
@@ -271,28 +326,18 @@ async function enviarTextoAlCerebro(textoUsuario) {
 }
 
 // ==========================================
-// SECCIÓN 4: MEMORIA Y ARRANQUE (BOTÓN BTL)
+// SECCIÓN 4: ARRANQUE DEL SISTEMA
 // ==========================================
-
-function generarNuevoId() { return 'totem_user_' + Math.random().toString(36).substr(2, 9); }
-function resetearTemporizador() {
-    clearTimeout(temporizadorInactividad);
-    temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
-}
-
 document.addEventListener('DOMContentLoaded', () => {
     const btnIniciar = document.getElementById('btnIniciar');
-    
-    // Al hacer clic, arranca la magia 3D y de audio
-    btnIniciar.addEventListener('click', () => {
-        console.log("🚀 Iniciando sistema Jungle...");
-        
-        // 1. Iniciar Three.js
-        initThreeJS();
-        // 2. Cargar el Modelo (esto ocultará el overlay al terminar)
-        loadModel(); 
-        // 3. Encender el micrófono
-        inicializarMicrofonoVAD();
-        resetearTemporizador();
-    });
+    if (btnIniciar) {
+        btnIniciar.addEventListener('click', () => {
+            btnIniciar.style.display = 'none'; 
+            console.log("🚀 Iniciando sistema Jungle...");
+            initThreeJS();
+            loadModel();
+            inicializarMicrofonoVAD();
+            resetearTemporizador();
+        });
+    }
 });
