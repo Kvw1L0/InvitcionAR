@@ -21,9 +21,10 @@ function resetearTemporizador() {
 }
 
 // ==========================================
-// 2. MOTOR VAD + WEBSOCKET DEEPGRAM CONTINUO
+// 2. MOTOR VAD + WEBSOCKET BLINDADO
 // ==========================================
 let audioContext, analyser, microphone, mediaRecorder;
+let globalStream; 
 let isUserSpeaking = false; 
 let silenceTimer = null;
 let isCalibrating = false;
@@ -34,11 +35,31 @@ let dynamicVolumeThreshold = 15;
 const SIGNAL_TO_NOISE_MARGIN = 10; 
 const SILENCE_DURATION = 600; 
 
-// Variables de Conexión
 let deepgramSocket;
 let transcripcionAcumulada = "";
+let keepAliveInterval;
 
-async function conectarDeepgram() {
+async function inicializarMicrofonoVAD() {
+    try {
+        globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.2;
+        microphone = audioContext.createMediaStreamSource(globalStream);
+        microphone.connect(analyser);
+
+        await conectarDeepgramYGrabar(); 
+        
+        console.log("🎤 Sistema de audio y red inicializados.");
+        calibrarRuidoAmbiente();
+
+    } catch (err) {
+        console.error("Error al acceder al micrófono:", err);
+    }
+}
+
+async function conectarDeepgramYGrabar() {
     try {
         const res = await fetch('/api/deepgram-token');
         const data = await res.json();
@@ -47,16 +68,19 @@ async function conectarDeepgram() {
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         
         deepgramSocket.onopen = () => {
-            console.log("⚡ Conexión en vivo con Deepgram establecida.");
+            console.log("⚡ Conexión en vivo establecida.");
             
-            // FIX CLAVE 1: Si el micrófono estaba apagado por una desconexión, lo volvemos a encender
-            // para que genere un nuevo encabezado WebM fresco.
-            if (mediaRecorder && mediaRecorder.state === 'inactive') {
-                mediaRecorder.start(250);
-            }
+            mediaRecorder = new MediaRecorder(globalStream, { mimeType: 'audio/webm' });
             
-            // Latido para mantener vivo el socket
-            setInterval(() => {
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0 && deepgramSocket.readyState === 1) {
+                    deepgramSocket.send(event.data); 
+                }
+            };
+            
+            mediaRecorder.start(250); 
+            
+            keepAliveInterval = setInterval(() => {
                 if (deepgramSocket.readyState === 1) {
                     deepgramSocket.send(JSON.stringify({ type: "KeepAlive" }));
                 }
@@ -65,12 +89,13 @@ async function conectarDeepgram() {
         
         deepgramSocket.onmessage = (message) => {
             const respuesta = JSON.parse(message.data);
-            
             if (respuesta.is_final && respuesta.channel && respuesta.channel.alternatives[0].transcript) {
                 const texto = respuesta.channel.alternatives[0].transcript.trim();
                 
-                // FIX CLAVE 2: Filtramos aquí. Si el avatar está hablando, ignoramos el texto.
-                if (texto !== "" && isUserSpeaking && !avatarHablando) {
+                // ¡LA CORRECCIÓN MAGISTRAL! 
+                // Eliminamos "&& isUserSpeaking". Ahora recibe texto tranquilamente 
+                // incluso durante los 400ms de gracia del silencio.
+                if (texto !== "" && !avatarHablando) {
                     transcripcionAcumulada += texto + " ";
                     console.log("📝 Escuchando:", transcripcionAcumulada);
                 }
@@ -78,46 +103,16 @@ async function conectarDeepgram() {
         };
 
         deepgramSocket.onclose = () => {
-            console.log("⚠️ Deepgram desconectado. Reiniciando grabador y reconectando...");
-            // Apagamos el grabador viejo para destruir el flujo corrupto
+            console.log("⚠️ Deepgram cerró la conexión. Limpiando y reconstruyendo...");
+            clearInterval(keepAliveInterval);
+            
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
             }
-            setTimeout(conectarDeepgram, 1000); 
+            setTimeout(conectarDeepgramYGrabar, 1000); 
         };
     } catch (error) {
         console.error("Error conectando a Deepgram:", error);
-    }
-}
-
-async function inicializarMicrofonoVAD() {
-    try {
-        await conectarDeepgram(); 
-        
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.2;
-        microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
-
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-        
-        mediaRecorder.ondataavailable = (event) => {
-            // FIX CLAVE 3: Ahora SIEMPRE le enviamos el audio a Deepgram, 
-            // incluso si el avatar habla, para que nunca nos corte la llamada por inactividad.
-            if (event.data.size > 0 && deepgramSocket && deepgramSocket.readyState === 1) {
-                deepgramSocket.send(event.data); 
-            }
-        };
-
-        mediaRecorder.start(250); 
-        console.log("🎤 Micrófono encendido y conectado en tiempo real.");
-        calibrarRuidoAmbiente();
-
-    } catch (err) {
-        console.error("Error al acceder al micrófono:", err);
     }
 }
 
@@ -131,10 +126,8 @@ function calibrarRuidoAmbiente() {
     const calibracionInterval = setInterval(() => {
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         analyser.getByteFrequencyData(dataArray);
-        
         let sum = 0;
         for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i]; }
-        
         totalVolume += (sum / dataArray.length);
         sampleCount++;
     }, 100); 
@@ -188,7 +181,6 @@ function monitorearVolumen() {
                         transcripcionAcumulada = ""; 
                     }
                 }, 400);
-
             }, SILENCE_DURATION); 
         }
     }
