@@ -10,17 +10,20 @@ let userId = generarNuevoId();
 let temporizadorInactividad;
 const TIEMPO_ESPERA_MS = 45000; 
 
+// --- Variables 3D (Three.js + Bloom) ---
 let scene, camera, renderer, model, mixer, composer, bloomPass; 
 let controls, clock = new THREE.Clock(); 
-let emissiveMeshes = []; // Aquí guardaremos solo los ojos y la boca
+// Colección de materiales de SOLO OJOS Y BOCA
+let emissiveMaterials = []; 
 
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/avatar-ia.glb?alt=media&token=541669a6-7baa-43d3-8f7e-4d4c2f07db8e'; 
 
+// --- Variables de Audio VAD/WebSockets (Entrada de micrófono) ---
 let audioContext, analyser, microphone, globalStream, mediaRecorder;
+// ... (resto de variables VAD iguales) ...
 let isUserSpeaking = false; 
 let silenceTimer = null;
 let isCalibrating = false;
-let avatarHablando = false; 
 let baseNoiseFloor = 0; 
 let dynamicVolumeThreshold = 15; 
 const SIGNAL_TO_NOISE_MARGIN = 10; 
@@ -28,16 +31,21 @@ const SILENCE_DURATION = 600;
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 
+// --- Variables de Audio Playback (Salida de voz del avatar) ---
+let avatarHablando = false; 
+let reproductorAnalyser; // Analizador para medir el volumen de ElevenLabs en tiempo real
+let dataArrayPlayback;   // Array para guardar los datos de frecuencia del playback
+
 // ==========================================
-// SECCIÓN 1: MOTOR GRÁFICO (THREE.JS + BLOOM)
+// SECCIÓN 1: MOTOR GRÁFICO (THREE.JS + BLOOM SELECTIVO)
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js con HDR Selectivo...");
+    console.log("⚙️ Inicializando Three.js para efecto Terminator...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x111827); 
+    scene.background = new THREE.Color(0x0a0f18); // Negro Jungle muy oscuro
 
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 3.8); 
@@ -49,22 +57,21 @@ function initThreeJS() {
 
     renderer.outputEncoding = THREE.sRGBEncoding; 
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    renderer.toneMappingExposure = 1.0; // Exposición estándar
     container.appendChild(renderer.domElement);
 
-    // FIX CLAVE 1: LUCES MÁS SUAVES
-    // Bajamos la luz para que el casco recupere su textura metálica gris y no se vuelva blanco.
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4); // Luz base suave
+    // FIX 1: ILUMINACIÓN DE ESTUDIO OSCURO
+    // Queremos que el casco se vea metálico pero oscuro. Reducimos mucho las luces.
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.15); // Luz ambiental muy tenue
     scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5); // Foco atenuado
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.3); // Foco muy suave
     directionalLight.position.set(2, 2, 5);
     scene.add(directionalLight);
 
-    // FIX CLAVE 2: BLOOM SELECTIVO (Umbral Alto)
-    // UnrealBloomPass( resolución, fuerza, radio, umbral )
-    // Cambiamos el umbral de 0.15 a 0.85. Ahora los reflejos del metal serán ignorados, 
-    // y SOLO los emisivos (ojos/boca a 10.0 - 30.0) activarán el efecto Neón.
-    bloomPass = new THREE.UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 2.5, 0.8, 0.85 );
+    // FIX 2: BLOOM SELECTIVO EXTREMO (Glow Sangrante Isolated)
+    // Cambiamos el umbral a 0.85. Solo los materiales extremadamente brillantes (Ojos/Boca a 15.0+) sangrarán.
+    // El radio (1.0) asegura que la luz se disperse mucho ("sangre").
+    bloomPass = new THREE.UnrealBloomPass( new THREE.Vector2( window.innerWidth, window.innerHeight ), 2.5, 1.0, 0.85 );
     
     composer = new THREE.EffectComposer( renderer );
     composer.addPass( new THREE.RenderPass( scene, camera ) );
@@ -88,11 +95,11 @@ function onWindowResize() {
 }
 
 // ==========================================
-// SECCIÓN 2: CARGADOR DE MODELO Y ANIMACIÓN
+// SECCIÓN 2: CARGADOR DE MODELO Y "BLACKOUT"
 // ==========================================
 
 function loadModel() {
-    console.log(`⚙️ Cargando modelo 3D...`);
+    console.log(`⚙️ Cargando modelo 3D con aislamiento de materiales...`);
     const loader = new THREE.GLTFLoader();
     loader.setCrossOrigin('anonymous');
 
@@ -101,19 +108,29 @@ function loadModel() {
         model.scale.set(1, 1, 1); 
         model.position.set(0, 0, 0); 
 
-        emissiveMeshes = [];
+        emissiveMaterials = [];
 
-        // BUSCAMOS LOS OJOS Y LA BOCA
+        // FIX 3: TRAVERSAL QUIRÚRGICO (AISLAR EL CASCO)
         model.traverse((child) => {
             if (child.isMesh && child.material) {
                 const materials = Array.isArray(child.material) ? child.material : [child.material];
                 
                 materials.forEach(mat => {
-                    // Si el material tiene color emisivo (es decir, fue diseñado para brillar)
+                    // Si el material tiene color emisivo (Ojos y Ranura de Boca)
                     if (mat.emissive && (mat.emissive.r > 0 || mat.emissive.g > 0 || mat.emissive.b > 0)) {
-                        mat.emissiveIntensity = 10.0; // Glow base
-                        emissiveMeshes.push(mat); 
-                        console.log(`✨ Detectado LED en: ${child.name}`);
+                        mat.emissiveIntensity = 15.0; // Glow base fuerte (sangrante pero estable)
+                        emissiveMaterials.push(mat); 
+                        console.log(`✨ LED aislado en malla: ${child.name}`);
+                    } 
+                    // Si NO es emisivo (Es el metal del casco/cabeza)
+                    else {
+                        // FIX: FORZAMOS EL BLACKOUT DEL CASCO
+                        // Convertimos el metal en un material negro mate oscuro que no refleja nada.
+                        // Esto asegura que la cabeza no brille NUNCA.
+                        mat.color.setHex(0x020202); // Negro casi absoluto
+                        mat.metalness = 0.9; // Mantenemos el look metálico...
+                        mat.roughness = 0.8; // ...pero lo hacemos muy rugoso para que no tenga reflejos espejo
+                        console.log(`🕶️ Casco oscurecido en malla: ${child.name}`);
                     }
                 });
             }
@@ -147,13 +164,35 @@ function animate() {
         model.position.y = Math.sin(time) * 0.15; 
     }
 
+    // FIX 4: LIP-SYNC DINÁMICO (EL LATIDO VISUAL)
+    // Si el avatar está hablando, calculamos la intensidad del brillo en tiempo real.
+    if (avatarHablando && reproductorAnalyser && emissiveMaterials.length > 0) {
+        reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
+        
+        // Calculamos el volumen promedio (Intensidad)
+        let sum = 0;
+        for (let i = 0; i < dataArrayPlayback.length; i++) {
+            sum += dataArrayPlayback[i];
+        }
+        const averageVolume = sum / dataArrayPlayback.length; // Valor entre 0 y 255
+        
+        // MAPEADO: Convertimos el volumen (0-255) a intensidad emisiva (15.0 - 80.0)
+        // 15.0 es el brillo base (sangrado normal).
+        // 80.0 es el brillo máximo (estallido sangrante en picos de voz).
+        // La fórmula asegura un latido orgánico al ritmo de las sílabas.
+        const dynamicIntensity = 15.0 + (averageVolume * (65.0 / 255.0));
+        
+        // Aplicamos el latido a SOLO ojos y boca
+        emissiveMaterials.forEach(mat => mat.emissiveIntensity = dynamicIntensity);
+    }
+
     if (composer) {
         composer.render();
     }
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS 
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (ENTRADA MICRÓFONO - IGUAL)
 // ==========================================
 
 function reiniciarSesionTotem() {
@@ -213,11 +252,18 @@ async function inicializarMicrofonoVAD() {
     try {
         globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // FIX 5: PREPARAR EL ANALIZADOR DE PLAYBACK
+        reproductorAnalyser = audioContext.createAnalyser();
+        reproductorAnalyser.fftSize = 256; // Pequeño para velocidad
+        dataArrayPlayback = new Uint8Array(reproductorAnalyser.frequencyBinCount);
+
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.2;
         microphone = audioContext.createMediaStreamSource(globalStream);
         microphone.connect(analyser);
+        
         await conectarDeepgramYGrabar(); 
         console.log("🎤 Micrófono encendido y conectado en tiempo real.");
         calibrarRuidoAmbiente();
@@ -282,6 +328,10 @@ function monitorearVolumen() {
     requestAnimationFrame(monitorearVolumen);
 }
 
+// ==========================================
+// SECCIÓN 3.5: LÓGICA DE PLAYBACK Y LIP-SYNC VISUAL
+// ==========================================
+
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
         console.log("🧠 Pensando respuesta...");
@@ -293,25 +343,42 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (!respuestaChat.ok) throw new Error("Error en IA");
         const data = await respuestaChat.json();
         
+        console.log("🤖 IA responde:", data.text);
+
+        // FIX 6: CONECTAR EL AUDIO AL ANALIZADOR
         avatarHablando = true; 
-        const reproductor = new Audio();
-        reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
         
-        // ESTALLIDO DE LUCES AL HABLAR
-        emissiveMeshes.forEach(mat => mat.emissiveIntensity = 40.0); // Mucha más fuerza
+        // Creamos el elemento Audio nativo
+        const reproductorElement = new Audio();
+        reproductorElement.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
+        reproductorElement.crossOrigin = "anonymous"; // Vital para Firebase/CORS
         
-        await reproductor.play();
+        // Creamos el nodo de fuente de audio en el contexto existente
+        const fuenteAudio = audioContext.createMediaElementSource(reproductorElement);
         
-        reproductor.onended = () => {
+        // CONEXIÓN CLAVE: fuente -> analizador playback -> parlantes
+        fuenteAudio.connect(reproductorAnalyser);
+        reproductorAnalyser.connect(audioContext.destination);
+        
+        console.log("🔥 Lip-Sync Dinámico (Latido LED) activado.");
+        
+        await reproductorElement.play();
+        
+        reproductorElement.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
             // VOLVEMOS AL GLOW BASE AL CALLAR
-            emissiveMeshes.forEach(mat => mat.emissiveIntensity = 10.0);
+            if (emissiveMaterials.length > 0) {
+                emissiveMaterials.forEach(mat => mat.emissiveIntensity = 15.0);
+            }
+            console.log("⏹️ Avatar en silencio. Intensidad base restablecida.");
         };
     } catch (error) {
         console.error("Error comunicando:", error);
         avatarHablando = false;
-        emissiveMeshes.forEach(mat => mat.emissiveIntensity = 10.0);
+        if (emissiveMaterials.length > 0) {
+            emissiveMaterials.forEach(mat => mat.emissiveIntensity = 15.0);
+        }
     }
 }
 
@@ -322,7 +389,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnIniciar.style.display = 'none'; 
             initThreeJS();
             loadModel();
-            inicializarMicrofonoVAD();
+            inicializarMicrofonoVAD(); // Esto ahora también prepara el analysers
             resetearTemporizador();
         });
     }
