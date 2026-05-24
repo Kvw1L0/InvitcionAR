@@ -1,17 +1,23 @@
 import OpenAI from 'openai';
 import axios from 'axios';
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
+import { initializeApp, cert, getApps, getApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 // 1. INICIALIZACIÓN DE FIREBASE ADMIN (Entorno Seguro)
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
+// Nos aseguramos de guardar la 'app' en una variable
+let app;
 if (!getApps().length) {
-    initializeApp({
+    app = initializeApp({
         credential: cert(serviceAccount)
     });
+} else {
+    app = getApp();
 }
-const db = getFirestore();
+
+// EL TOQUE FINAL: Le pasamos la 'app' primero, y el ID de tu base de datos después
+const db = getFirestore(app, 'eventos');
 
 // Función auxiliar para capturar el flujo de datos del audio
 async function getRawBody(req) {
