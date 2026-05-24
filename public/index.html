@@ -3,31 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Avatar IA - Experiencia Interactiva</title>
+    <title>Jungle - Avatar AI Low-Latency</title>
     <style>
-        /* Quitamos márgenes y barras de scroll para que el 3D ocupe toda la pantalla */
-        html, body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            width: 100%;
-            height: 100%;
-            background-color: #0a0a0a;
+        /* CSS necesario para el BTL: Modelo a pantalla completa */
+        body { margin: 0; overflow: hidden; background-color: #111827; font-family: sans-serif; }
+        canvas { display: block; }
+
+        /* Pantalla de bienvenida (Overlay) */
+        #overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(17, 24, 39, 0.95); /* Negro Jungle */
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 1000; color: white; transition: 0.5s;
         }
-        canvas {
-            display: block;
-            width: 100vw;
-            height: 100vh;
+        button {
+            padding: 20px 40px; font-size: 24px; cursor: pointer;
+            background-color: #10b981; /* Verde Jungle */
+            color: #111827; border: none; border-radius: 8px; font-weight: bold;
         }
+        
+        /* Contenedor invisible para Three.js */
+        #threejs-container { width: 100vw; height: 100vh; }
     </style>
 </head>
 <body>
 
-    <button id="btnIniciar" style="position: absolute; z-index: 100; padding: 20px; font-size: 24px; cursor: pointer;">
-    Tocar para iniciar experiencia
-    </button>
+    <div id="overlay">
+        <h1>🦁 JUNGLE - AVATAR AI 🦁</h1>
+        <p>Toca para cargar el modelo 3D y activar el micrófono.</p>
+        <button id="btnIniciar">Comenzar Experiencia BTL</button>
+    </div>
 
-    <script type="module" src="./main.js"></script>
+    <div id="threejs-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script src="main.js"></script>
 
 </body>
 </html>
