@@ -6,48 +6,24 @@
     <title>Jungle - Avatar AI Low-Latency</title>
     <style>
         /* CSS necesario para el BTL: Modelo a pantalla completa */
-        body { 
-            margin: 0; 
-            overflow: hidden; 
-            background-color: #000000; /* Fondo negro absoluto para resaltar el glow */
-            font-family: sans-serif; 
-        }
-        canvas { 
-            display: block; 
-        }
+        body { margin: 0; overflow: hidden; background-color: #000000; font-family: sans-serif; }
+        canvas { display: block; }
 
-        /* Pantalla de bienvenida (Overlay para permisos del navegador) */
+        /* Pantalla de bienvenida (Overlay) */
         #overlay {
-            position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(17, 24, 39, 0.95); /* Negro Jungle */
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center;
-            z-index: 1000; 
-            color: white; 
-            transition: 0.5s;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 1000; color: white; transition: 0.5s;
         }
         button {
-            padding: 20px 40px; 
-            font-size: 24px; 
-            cursor: pointer;
+            padding: 20px 40px; font-size: 24px; cursor: pointer;
             background-color: #10b981; /* Verde Jungle */
-            color: #111827; 
-            border: none; 
-            border-radius: 8px; 
-            font-weight: bold;
+            color: #111827; border: none; border-radius: 8px; font-weight: bold;
         }
         
         /* Contenedor invisible para Three.js */
-        #threejs-container { 
-            width: 100vw; 
-            height: 100vh; 
-        }
+        #threejs-container { width: 100vw; height: 100vh; }
     </style>
 </head>
 <body>
@@ -68,7 +44,9 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/CopyShader.js"></script>
+    
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+    
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 
     <script src="main.js"></script>
