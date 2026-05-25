@@ -8,7 +8,7 @@ export default async function handler(req, res) {
 
     try {
         // optimize_streaming_latency=3 obliga a ElevenLabs a responder en milisegundos
-        const url = `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}/stream?optimize_streaming_latency=3`;
+        const url = `https://api.elevenlabs.io/v1/text-to-speech/6Gr4AVmTax1pMJO0lHRK/stream?optimize_streaming_latency=3`;
         
         const response = await axios.post(
             url,
