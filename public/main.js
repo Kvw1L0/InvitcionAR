@@ -10,17 +10,15 @@ let userId = generarNuevoId();
 let temporizadorInactividad;
 const TIEMPO_ESPERA_MS = 45000; 
 
-// --- Variables 3D (Three.js + Bloom Dinámico) ---
+// --- Variables 3D ---
 let scene, camera, renderer, model, mixer, composer, bloomPass; 
 let controls, clock = new THREE.Clock(); 
 
-// ÚNICA colección global: Solo para la luz de Ojos/Boca (Cero deformación)
 let emissiveMaterials = []; 
 
-// TOKEN DE FIREBASE ACTUALIZADO
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c'; 
 
-// --- Variables de Audio VAD/WebSockets ---
+// --- Variables de Audio ---
 let audioContext, analyser, microphone, globalStream, mediaRecorder;
 let isUserSpeaking = false; 
 let silenceTimer = null;
@@ -33,16 +31,15 @@ const SILENCE_DURATION = 600;
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 
-// --- Variables de Audio Playback (Lip-sync Fotónico) ---
 let reproductorAnalyser; 
 let dataArrayPlayback;   
 
 // ==========================================
-// SECCIÓN 1: MOTOR GRÁFICO (BLOOM SELECTIVO HDR)
+// SECCIÓN 1: MOTOR GRÁFICO (BLOOM RESTRINGIDO)
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js: Casco Húmedo y Fuego Neón Hiper-Reactivo...");
+    console.log("⚙️ Inicializando Three.js: Bloom contenido y Acero puro...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
@@ -55,28 +52,19 @@ function initThreeJS() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor( 0x000000, 1 ); 
-
-    // NoToneMapping: Vital para que el rojo puro sangre no se vuelva blanco
     renderer.outputEncoding = THREE.sRGBEncoding; 
     renderer.toneMapping = THREE.NoToneMapping; 
     container.appendChild(renderer.domElement);
 
-    // ILUMINACIÓN METÁLICA (Húmeda y Brillante)
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5); 
-    scene.add(ambientLight);
-    
-    // Luz frontal fuerte para sacar el brillo del metal
+    // ILUMINACIÓN METÁLICA (Húmeda)
+    scene.add(new THREE.AmbientLight(0xffffff, 1.5)); 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0); 
     directionalLight.position.set(0, 2, 5);
     scene.add(directionalLight);
 
-    const fillLight = new THREE.DirectionalLight(0xddddff, 1.0); 
-    fillLight.position.set(-5, 3, -5);
-    scene.add(fillLight);
-
-    // SOLUCIÓN 2: BLOOM EXTREMO CALIBRADO
-    // Fuerza: 4.0 | Radio: 1.5 | Threshold: 0.2 (Muy bajo para que estalle la luz)
-    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 4.0, 1.5, 0.2);
+    // BLOOM CONTENIDO: Fuerza(3.5), Radio pequeño(0.3), Umbral(0.6)
+    // Esto evita que manche las mejillas metálicas.
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.5, 0.3, 0.6);
     
     composer = new THREE.EffectComposer(renderer);
     composer.addPass(new THREE.RenderPass(scene, camera));
@@ -100,11 +88,10 @@ function onWindowResize() {
 }
 
 // ==========================================
-// SECCIÓN 2: CARGADOR DE MODELO (SEPARACIÓN QUIRÚRGICA)
+// SECCIÓN 2: CARGADOR DE MODELO 
 // ==========================================
 
 function loadModel() {
-    console.log(`⚙️ Cargando nuevo modelo 3D desde Firebase...`);
     const loader = new THREE.GLTFLoader();
     loader.setCrossOrigin('anonymous');
 
@@ -125,23 +112,21 @@ function loadModel() {
 
                     // OJOS Y BOCA -> FUEGO ROJO PURO
                     if (matName.includes('ojo') || meshName.includes('ojo') || matName.includes('boca') || meshName.includes('boca')) {
-                        mat.emissive = new THREE.Color(0xff0000); // Emisión roja máxima
-                        mat.color = new THREE.Color(0x000000);    // Base NEGRA
+                        mat.emissive = new THREE.Color(0xff0000); 
+                        mat.color = new THREE.Color(0x000000); // Base negra absoluta
                         mat.metalness = 0.0;           
                         mat.roughness = 1.0;           
-                        mat.emissiveIntensity = 3.0;   // Intensidad idle base
+                        mat.emissiveIntensity = 2.0;   // Intensidad base más calmada
                         
                         emissiveMaterials.push(mat); 
-                        console.log(`🔥 Fuego Fotónico inyectado en: ${child.name}`);
                     } 
-                    // CASCO -> ACERO HÚMEDO BRILLANTE
+                    // CASCO -> ACERO
                     else {
-                        mat.emissive = new THREE.Color(0x000000); // Cero emisión
+                        mat.emissive = new THREE.Color(0x000000); 
                         mat.emissiveIntensity = 0;
                         mat.metalness = 1.0;  
                         mat.roughness = 0.15; 
                         mat.color = new THREE.Color(0xaaaaaa); 
-                        console.log(`🛡️ Acero Húmedo configurado en: ${child.name}`);
                     }
                 });
             }
@@ -173,18 +158,18 @@ function animate() {
     
     const time = Date.now() * 0.002;
     if (model) {
-        model.position.y = Math.sin(time) * 0.15; // Flotación suave
+        model.position.y = Math.sin(time) * 0.15; 
     }
 
     // ==========================================
-    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ)
+    // CORAZÓN FOTÓNICO (REACTIVIDAD AL AUDIO)
     // ==========================================
     if (emissiveMaterials.length > 0) {
         
-        // ESTADO 1: HABLANDO
         if (avatarHablando && reproductorAnalyser) {
             reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
             
+            // Buscar el pico máximo de volumen (0 a 255)
             let maxVolume = 0;
             for (let i = 0; i < dataArrayPlayback.length; i++) {
                 if (dataArrayPlayback[i] > maxVolume) {
@@ -192,24 +177,18 @@ function animate() {
                 }
             }
             
-            // DIAGNÓSTICO: Descomenta la siguiente línea si quieres ver el volumen en consola
-            // console.log("Volumen detectado:", maxVolume); 
-            
-            // Intensidad extrema: Base 3.0 + hasta 150 extra dependiendo del volumen
-            const dynamicIntensity = 3.0 + (maxVolume / 255.0) * 150.0;
+            // Intensidad extrema: Base 2.0 + hasta 80 de potencia extra
+            const dynamicIntensity = 2.0 + (maxVolume / 255.0) * 80.0;
             
             emissiveMaterials.forEach(mat => {
                 mat.emissiveIntensity = dynamicIntensity;
-                mat.needsUpdate = true; // SOLUCIÓN 3: Forzar actualización del material
             });
         } 
-        
-        // ESTADO 2: SILENCIO (Respiración de lava)
         else {
-            const idlePulse = 3.0 + Math.sin(time * 4.0) * 1.5; 
+            // Respiración inactiva súper sutil (para no cansar a la vista)
+            const idlePulse = 2.0 + Math.sin(time * 3.0) * 0.8; 
             emissiveMaterials.forEach(mat => {
                 mat.emissiveIntensity = idlePulse;
-                mat.needsUpdate = true; // Forzar actualización del material
             });
         }
     }
@@ -220,12 +199,11 @@ function animate() {
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (INTACTO)
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS 
 // ==========================================
 
 function reiniciarSesionTotem() {
     userId = generarNuevoId();
-    console.log("🔄 Sesión reiniciada. Tótem listo para: " + userId);
     calibrarRuidoAmbiente(); 
 }
 
@@ -261,12 +239,10 @@ async function conectarDeepgramYGrabar() {
                 const texto = respuesta.channel.alternatives[0].transcript.trim();
                 if (texto !== "" && !avatarHablando) {
                     transcripcionAcumulada += texto + " ";
-                    console.log("📝 Escuchando:", transcripcionAcumulada);
                 }
             }
         };
         deepgramSocket.onclose = () => {
-            console.log("⚠️ Deepgram desconectado. Limpiando y reconectando...");
             clearInterval(keepAliveInterval);
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
@@ -278,15 +254,21 @@ async function conectarDeepgramYGrabar() {
     }
 }
 
-async function inicializarMicrofonoVAD() {
+// --- CREACIÓN FORZADA DEL CONTEXTO DE AUDIO AL CLIC ---
+async function inicializarAudioYMicrofono() {
     try {
-        globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Obligatorio crear el contexto DENTRO de la función disparada por el botón
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+
         reproductorAnalyser = audioContext.createAnalyser();
         reproductorAnalyser.fftSize = 256; 
         dataArrayPlayback = new Uint8Array(reproductorAnalyser.frequencyBinCount);
 
+        globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.2;
@@ -294,16 +276,15 @@ async function inicializarMicrofonoVAD() {
         microphone.connect(analyser);
         
         await conectarDeepgramYGrabar(); 
-        console.log("🎤 Micrófono conectado.");
+        console.log("🎤 Micrófono y Analizador conectados correctamente.");
         calibrarRuidoAmbiente();
     } catch (err) {
-        console.error("Error micrófono:", err);
+        console.error("Error inicializando audio:", err);
     }
 }
 
 function calibrarRuidoAmbiente() {
     isCalibrating = true;
-    console.log("⚙️ Calibrando ruido de fondo...");
     let totalVolume = 0;
     let sampleCount = 0;
     const calibracionInterval = setInterval(() => {
@@ -319,7 +300,6 @@ function calibrarRuidoAmbiente() {
         baseNoiseFloor = totalVolume / sampleCount;
         dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
         isCalibrating = false;
-        console.log(`✅ Calibración lista. Umbral: ${dynamicVolumeThreshold.toFixed(2)}`);
         monitorearVolumen();
     }, 3000);
 }
@@ -338,7 +318,6 @@ function monitorearVolumen() {
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
         if (!isUserSpeaking) {
-            console.log(`🎙️ Voz detectada...`);
             isUserSpeaking = true;
         }
         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
@@ -353,83 +332,4 @@ function monitorearVolumen() {
                         transcripcionAcumulada = ""; 
                     }
                 }, 400);
-            }, SILENCE_DURATION); 
-        }
-    }
-    requestAnimationFrame(monitorearVolumen);
-}
-
-// ==========================================
-// SECCIÓN 3.5: LÓGICA DE PLAYBACK FOTÓNICO (BYPASS CORS)
-// ==========================================
-
-async function enviarTextoAlCerebro(textoUsuario) {
-    try {
-        console.log("🧠 Pensando respuesta...");
-        const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: textoUsuario.trim() })
-        });
-        if (!respuestaChat.ok) throw new Error("Error IA");
-        const data = await respuestaChat.json();
-        
-        console.log("⬇️ Descargando audio para inyección directa...");
-        
-        // SOLUCIÓN 1: ASEGURAR QUE EL CONTEXTO ESTÉ DESPIERTO ANTES DE PROCESAR
-        if (audioContext && audioContext.state === 'suspended') {
-            await audioContext.resume();
-            console.log("🔊 AudioContext despertado forzosamente.");
-        }
-        
-        const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
-        const arrayBuffer = await audioResponse.arrayBuffer();
-        
-        // Decodificamos el audio dentro del contexto
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        
-        // Creamos la fuente de audio interna
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        
-        // CONECTAR AL ANALIZADOR Y A LOS PARLANTES
-        source.connect(reproductorAnalyser);
-        reproductorAnalyser.connect(audioContext.destination);
-        
-        avatarHablando = true; 
-        console.log("🔥 Destellos reactivos de voz activados (Lectura de Picos).");
-        
-        // Reproducir
-        source.start(0);
-        
-        source.onended = () => {
-            avatarHablando = false; 
-            resetearTemporizador();
-            emissiveMaterials.forEach(mat => {
-                mat.emissiveIntensity = 3.0;
-                mat.needsUpdate = true;
-            });
-            console.log("⏹️ Avatar en silencio (Vuelve a respiración).");
-        };
-    } catch (error) {
-        console.error("Error comunicando:", error);
-        avatarHablando = false;
-        emissiveMaterials.forEach(mat => {
-            mat.emissiveIntensity = 3.0;
-            mat.needsUpdate = true;
-        });
-    }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const btnIniciar = document.getElementById('btnIniciar');
-    if (btnIniciar) {
-        btnIniciar.addEventListener('click', () => {
-            btnIniciar.style.display = 'none'; 
-            initThreeJS();
-            loadModel();
-            inicializarMicrofonoVAD(); 
-            resetearTemporizador();
-        });
-    }
-});
+            }, SILENCE_DURATION
