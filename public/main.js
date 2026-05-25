@@ -42,11 +42,11 @@ let dataArrayPlayback;
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js con HDR Dinámico...");
+    console.log("⚙️ Inicializando Three.js con HDR Dinámico (Efecto Neón)...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0a0f18); // Negro Jungle muy oscuro
+    scene.background = new THREE.Color(0x05080c); 
 
     camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 0, 3.8); 
@@ -57,24 +57,26 @@ function initThreeJS() {
     renderer.setClearColor( 0x000000, 1 ); 
 
     // Activar renderizado HDR vital para materiales emisivos (Glow)
+    // Usamos NoToneMapping para este efecto neón de "lava" carmesí puro.
     renderer.outputEncoding = THREE.sRGBEncoding; 
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMapping = THREE.NoToneMapping; 
     renderer.toneMappingExposure = 1.0;
     container.appendChild(renderer.domElement);
 
-    // ILUMINACIÓN DE ESTUDIO
+    // ILUMINACIÓN METÁLICA (Húmeda)
     scene.add(new THREE.AmbientLight(0xffffff, 1.2)); 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0); 
-    directionalLight.position.set(2, 2, 5);
+    directionalLight.position.set(0, 2, 5);
     scene.add(directionalLight);
 
-    const fillLight = new THREE.DirectionalLight(0x88bbff, 0.8); // Luz azulada cinematográfica
+    const fillLight = new THREE.DirectionalLight(0xddddff, 1.0); 
     fillLight.position.set(-5, 3, -5);
     scene.add(fillLight);
 
-    // BLOOM (Glow LED)
+    // BLOOM (Glow "Sangrante") 
     // Fuerza, Radio, Umbral
-    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.8, 1.2, 0.9);
+    // Calibrado con radio amplio (1.5) y fuerza alta (3.0) para un efecto expansivo.
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 1.5, 0.9);
     
     composer = new THREE.EffectComposer(renderer);
     composer.addPass(new THREE.RenderPass(scene, camera));
@@ -102,7 +104,7 @@ function onWindowResize() {
 // ==========================================
 
 function loadModel() {
-    console.log(`⚙️ Cargando modelo 3D desde Firebase Storage...`);
+    console.log(`⚙️ Cargando nuevo modelo 3D desde Firebase...`);
     const loader = new THREE.GLTFLoader();
     loader.setCrossOrigin('anonymous');
 
@@ -121,33 +123,33 @@ function loadModel() {
                     const matName = mat.name.toLowerCase();
                     const meshName = child.name.toLowerCase();
 
-                    // OJOS Y BOCA -> MEJORA: COLOR ROJO LED PURO
+                    // OJOS Y BOCA -> FUEGO ROJO PURO (Efecto "Lava")
                     if (matName.includes('ojo') || meshName.includes('ojo') || matName.includes('boca') || meshName.includes('boca')) {
-                        
-                        // --- AJUSTE ESTÉTICO PARA MÁS ROJO LED ---
-                        mat.color.setHex(0xff0000); // Color base rojo puro (evita el centro blanco)
+                        // LA CLAVE ESTÉTICA: Material base negro puro
+                        mat.color.setHex(0x000000); // Evita el color plano/rosa
                         mat.emissive.setHex(0xff0000); // Emisión roja máxima
-                        mat.emissiveIntensity = 8.0; // Intensidad base reducida para mantener el color rojo en HDR
+                        mat.emissiveIntensity = 3.0;   // Intensidad idle base
                         mat.metalness = 0.0;           
                         mat.roughness = 1.0;           
                         
                         emissiveMaterials.push(mat); 
-                        console.log(`🔥 LED Neón Aislado en: ${child.name}`);
+                        console.log(`🔥 Fuego Fotónico inyectado en: ${child.name}`);
                     } 
-                    // CASCO Y CABEZA
+                    // CASCO -> ACERO HÚMEDO BRILLANTE
                     else {
                         mat.emissive.setHex(0x000000); 
                         mat.emissiveIntensity = 0;
-                        mat.metalness = 1.0;  
-                        mat.roughness = 0.35; 
-                        mat.color.setHex(0x555555); // Gris oscuro titanio
+                        mat.metalness = 1.0;  // Acero puro
+                        mat.roughness = 0.15; // Húmedo/espejo pulido
+                        mat.color.setHex(0xaaaaaa); // Gris plata
+                        console.log(`🛡️ Acero Húmedo configurado en: ${child.name}`);
                     }
                 });
             }
         });
 
         scene.add(model);
-        console.log("✅ Modelo 3D cargado correctamente con Ojos encendidos.");
+        console.log("✅ Modelo 3D cargado: Acero Húmedo y Fuego Rojo listos.");
 
         if (gltf.animations && gltf.animations.length > 0) {
             mixer = new THREE.AnimationMixer(model);
@@ -176,7 +178,7 @@ function animate() {
     }
 
     // ==========================================
-    // CORAZÓN FOTÓNICO (LIP-SYNC FOTÓNICO)
+    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ)
     // ==========================================
     if (emissiveMaterials.length > 0) {
         
@@ -184,6 +186,7 @@ function animate() {
         if (avatarHablando && reproductorAnalyser) {
             reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
             
+            // Buscar el pico máximo de volumen (0 a 255)
             let maxVolume = 0;
             for (let i = 0; i < dataArrayPlayback.length; i++) {
                 if (dataArrayPlayback[i] > maxVolume) {
@@ -191,16 +194,21 @@ function animate() {
                 }
             }
             
-            // --- AJUSTE ESTÉTICO: MENOS SATURADO, MÁS ROJO LED ---
-            // Escalamos de 4 a 12 (en lugar de 8 a 20) para mantener el color rojo en HDR
-            const intensity = 4.0 + (maxVolume / 255.0) * 8.0; 
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = intensity);
+            // Inteligencia de escalado: Intensidad extrema
+            // Base 3.0 + hasta 60 de potencia extra dependiendo del volumen
+            const dynamicIntensity = 3.0 + (maxVolume / 255.0) * 60.0;
+            
+            emissiveMaterials.forEach(mat => {
+                mat.emissiveIntensity = dynamicIntensity;
+            });
         } 
         
         // ESTADO 2: SILENCIO (Respiración de lava)
         else {
-            const idlePulse = 4.0 + Math.sin(time * 3.0) * 1.5; // Respiración entre 2.5 y 5.5
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = idlePulse);
+            const idlePulse = 3.0 + Math.sin(time * 3.0) * 1.5; // Respiración sutil
+            emissiveMaterials.forEach(mat => {
+                mat.emissiveIntensity = idlePulse;
+            });
         }
     }
 
@@ -210,12 +218,12 @@ function animate() {
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (INTACTO)
 // ==========================================
 
 function reiniciarSesionTotem() {
     userId = generarNuevoId();
-    console.log("🔄 Sesión reiniciada. Tótem listo para una nueva persona: " + userId);
+    console.log("🔄 Sesión reiniciada. Tótem listo para: " + userId);
     calibrarRuidoAmbiente(); 
 }
 
@@ -284,7 +292,7 @@ async function inicializarMicrofonoVAD() {
         microphone.connect(analyser);
         
         await conectarDeepgramYGrabar(); 
-        console.log("🎤 Micrófono encendido y conectado en tiempo real.");
+        console.log("🎤 Micrófono conectado.");
         calibrarRuidoAmbiente();
     } catch (err) {
         console.error("Error micrófono:", err);
@@ -328,8 +336,7 @@ function monitorearVolumen() {
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
         if (!isUserSpeaking) {
-            // --- NUEVO LOG: VOZ DETECTADA ---
-            console.log("🎙️ Voz detectada. Capturando frase...");
+            console.log(`🎙️ Voz detectada...`);
             isUserSpeaking = true;
         }
         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
@@ -340,8 +347,6 @@ function monitorearVolumen() {
                 silenceTimer = null;
                 setTimeout(() => {
                     if (!isUserSpeaking && transcripcionAcumulada.trim() !== "") {
-                        // --- NUEVO LOG: FRASE TERMINADA Y ENVIADA ---
-                        console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
                         enviarTextoAlCerebro(transcripcionAcumulada);
                         transcripcionAcumulada = ""; 
                     }
@@ -358,8 +363,7 @@ function monitorearVolumen() {
 
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
-        // --- LOG RECUPERADO: PENSANDO ---
-        console.log("🧠 Pensando respuesta para:", textoUsuario);
+        console.log("🧠 Pensando respuesta...");
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -367,9 +371,10 @@ async function enviarTextoAlCerebro(textoUsuario) {
         });
         if (!respuestaChat.ok) throw new Error("Error IA");
         const data = await respuestaChat.json();
-        // --- LOG RECUPERADO: RESPONDIENDO ---
-        console.log("🤖 IA responde:", data.text);
         
+        console.log("⬇️ Descargando audio para inyección directa...");
+        
+        // EL TRUCO MAESTRO: Descargamos el audio como datos puros para engañar la seguridad del navegador
         const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
         const arrayBuffer = await audioResponse.arrayBuffer();
         
@@ -385,8 +390,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
         reproductorAnalyser.connect(audioContext.destination);
         
         avatarHablando = true; 
-        // --- LOG RECUPERADO: INICIANDO PLAYBACK/LIP-SYNC ---
-        console.log("Lip-Sync Orgánico (Glow HDR) activado.");
+        console.log("🔥 Destellos reactivos de voz activados (Lectura de Picos).");
         
         // Reproducir
         source.start(0);
@@ -394,12 +398,13 @@ async function enviarTextoAlCerebro(textoUsuario) {
         source.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
-            // --- LOG RECUPERADO: SILENCIO ---
-            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
+            emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0); // Fuerza la vuelta a idle
+            console.log("⏹️ Avatar en silencio (Vuelve a respiración).");
         };
     } catch (error) {
         console.error("Error comunicando:", error);
         avatarHablando = false;
+        emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0);
     }
 }
 
