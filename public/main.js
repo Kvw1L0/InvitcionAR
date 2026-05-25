@@ -332,4 +332,71 @@ function monitorearVolumen() {
                         transcripcionAcumulada = ""; 
                     }
                 }, 400);
-            }, SILENCE_DURATION
+            }, SILENCE_DURATION); 
+        }
+    }
+    requestAnimationFrame(monitorearVolumen);
+}
+
+// ==========================================
+// SECCIÓN 3.5: LÓGICA DE PLAYBACK (CON INYECCIÓN DIRECTA)
+// ==========================================
+
+async function enviarTextoAlCerebro(textoUsuario) {
+    try {
+        console.log("🧠 Pensando respuesta...");
+        const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: textoUsuario.trim() })
+        });
+        if (!respuestaChat.ok) throw new Error("Error IA");
+        const data = await respuestaChat.json();
+        
+        // Despertar contexto por seguridad
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+        
+        const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        
+        // CONECTAR AL ANALIZADOR DE LUZ Y LUEGO A LOS PARLANTES
+        source.connect(reproductorAnalyser);
+        reproductorAnalyser.connect(audioContext.destination);
+        
+        avatarHablando = true; 
+        console.log("🔥 Destellos reactivos activados.");
+        
+        source.start(0);
+        
+        source.onended = () => {
+            avatarHablando = false; 
+            resetearTemporizador();
+        };
+    } catch (error) {
+        console.error("Error comunicando:", error);
+        avatarHablando = false;
+    }
+}
+
+// ==========================================
+// ARRANQUE DEL SISTEMA
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
+    const btnIniciar = document.getElementById('btnIniciar');
+    if (btnIniciar) {
+        btnIniciar.addEventListener('click', () => {
+            btnIniciar.style.display = 'none'; 
+            initThreeJS();
+            loadModel();
+            // LA CLAVE: Inicializar todo el motor de audio exactamente aquí
+            inicializarAudioYMicrofono(); 
+            resetearTemporizador();
+        });
+    }
+});
