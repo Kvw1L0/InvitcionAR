@@ -1,10 +1,35 @@
+```javascript
 // ==========================================
-// MAIN.JS — AVATAR IA REACTIVO HDR
-// Glow LED + LipSync Fotónico + Deepgram
+// MAIN.JS — AVATAR IA HDR SELECTIVE BLOOM
+// VERSION PROFESIONAL
+// ==========================================
+//
+// ✔ Selective Bloom REAL
+// ✔ Solo ojos y boca brillan
+// ✔ Casco metálico sin contaminación HDR
+// ✔ LipSync fotónico reactivo
+// ✔ Glow fuego LED
+// ✔ Deepgram + IA + TTS
+//
 // ==========================================
 
 // ==========================================
-// SECCIÓN 0: VARIABLES GLOBALES
+// IMPORTANTE
+// ==========================================
+//
+// NECESITAS IMPORTAR:
+//
+// EffectComposer
+// RenderPass
+// UnrealBloomPass
+// ShaderPass
+// OrbitControls
+// GLTFLoader
+//
+// ==========================================
+
+// ==========================================
+// SECCIÓN 0 — VARIABLES GLOBALES
 // ==========================================
 
 function generarNuevoId() {
@@ -13,24 +38,40 @@ function generarNuevoId() {
 
 let userId = generarNuevoId();
 
-let temporizadorInactividad;
-const TIEMPO_ESPERA_MS = 45000;
+const ENTIRE_SCENE = 0;
+const BLOOM_SCENE = 1;
 
-// ---------- THREE ----------
+const darkMaterial = new THREE.MeshBasicMaterial({
+    color: "black"
+});
+
+const materials = {};
+
 let scene;
 let camera;
 let renderer;
+
 let composer;
+let bloomComposer;
+
 let bloomPass;
-let controls;
+
 let mixer;
 let model;
+let controls;
 
-const clock = new THREE.Clock();
+let clock = new THREE.Clock();
 
+let emissiveMeshes = [];
 let emissiveMaterials = [];
 
-// ---------- AUDIO ----------
+let temporizadorInactividad;
+const TIEMPO_ESPERA_MS = 45000;
+
+// ==========================================
+// AUDIO
+// ==========================================
+
 let audioContext;
 let analyser;
 let microphone;
@@ -51,28 +92,67 @@ let dynamicVolumeThreshold = 15;
 const SIGNAL_TO_NOISE_MARGIN = 10;
 const SILENCE_DURATION = 600;
 
-// ---------- DEEPGRAM ----------
+// ==========================================
+// DEEPGRAM
+// ==========================================
+
 let deepgramSocket;
 let keepAliveInterval;
-
 let transcripcionAcumulada = "";
 
-// ---------- MODEL ----------
+// ==========================================
+// MODELO
+// ==========================================
+
 const MODEL_PATH =
-    'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c';
+'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c';
 
 // ==========================================
-// SECCIÓN 1: THREE.JS
+// SHADERS SELECTIVE BLOOM
+// ==========================================
+
+const vertexshader = `
+varying vec2 vUv;
+
+void main() {
+
+    vUv = uv;
+
+    gl_Position = projectionMatrix *
+                  modelViewMatrix *
+                  vec4(position,1.0);
+}
+`;
+
+const fragmentshader = `
+uniform sampler2D baseTexture;
+uniform sampler2D bloomTexture;
+
+varying vec2 vUv;
+
+void main() {
+
+    gl_FragColor =
+        texture2D(baseTexture, vUv) +
+        vec4(1.0) * texture2D(bloomTexture, vUv);
+}
+`;
+
+// ==========================================
+// INIT THREE
 // ==========================================
 
 function initThreeJS() {
 
-    console.log("⚙️ Inicializando motor gráfico HDR...");
+    console.log("⚙️ Inicializando Selective Bloom HDR...");
 
-    const container = document.getElementById('threejs-container');
+    const container =
+        document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x05080c);
+
+    scene.background =
+        new THREE.Color(0x08111c);
 
     camera = new THREE.PerspectiveCamera(
         50,
@@ -85,19 +165,23 @@ function initThreeJS() {
 
     renderer = new THREE.WebGLRenderer({
         antialias: true,
-        alpha: true
+        alpha: false
     });
 
     renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
 
-    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
 
-    // HDR REAL
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.5;
+    renderer.outputEncoding =
+        THREE.sRGBEncoding;
 
-    renderer.setClearColor(0x000000, 1);
+    renderer.toneMapping =
+        THREE.ACESFilmicToneMapping;
+
+    renderer.toneMappingExposure = 0.9;
 
     container.appendChild(renderer.domElement);
 
@@ -105,39 +189,109 @@ function initThreeJS() {
     // LUCES
     // ==========================================
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+    const ambientLight =
+        new THREE.AmbientLight(
+            0xffffff,
+            1.2
+        );
+
     scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0);
-    directionalLight.position.set(0, 2, 5);
-    scene.add(directionalLight);
+    const keyLight =
+        new THREE.DirectionalLight(
+            0xffffff,
+            1.8
+        );
 
-    const fillLight = new THREE.DirectionalLight(0xddddff, 1.0);
+    keyLight.position.set(0, 2, 5);
+
+    scene.add(keyLight);
+
+    const fillLight =
+        new THREE.DirectionalLight(
+            0x88aaff,
+            0.6
+        );
+
     fillLight.position.set(-5, 3, -5);
+
     scene.add(fillLight);
 
     // ==========================================
-    // BLOOM
+    // BLOOM PASS
     // ==========================================
 
-    bloomPass = new THREE.UnrealBloomPass(
-        new THREE.Vector2(window.innerWidth, window.innerHeight),
-        3.0,
-        1.2,
-        0.1
+    bloomPass =
+        new THREE.UnrealBloomPass(
+            new THREE.Vector2(
+                window.innerWidth,
+                window.innerHeight
+            ),
+            2.0,
+            0.8,
+            0.25
+        );
+
+    bloomPass.threshold = 0.22;
+    bloomPass.strength = 2.2;
+    bloomPass.radius = 0.9;
+
+    // ==========================================
+    // BLOOM COMPOSER
+    // ==========================================
+
+    bloomComposer =
+        new THREE.EffectComposer(renderer);
+
+    bloomComposer.renderToScreen = false;
+
+    bloomComposer.addPass(
+        new THREE.RenderPass(scene, camera)
     );
 
-    bloomPass.threshold = 0.05;
-    bloomPass.strength = 3.5;
-    bloomPass.radius = 1.0;
+    bloomComposer.addPass(bloomPass);
 
-    composer = new THREE.EffectComposer(renderer);
+    // ==========================================
+    // FINAL COMPOSER
+    // ==========================================
+
+    composer =
+        new THREE.EffectComposer(renderer);
 
     composer.addPass(
         new THREE.RenderPass(scene, camera)
     );
 
-    composer.addPass(bloomPass);
+    const finalPass =
+        new THREE.ShaderPass(
+            new THREE.ShaderMaterial({
+
+                uniforms: {
+
+                    baseTexture: {
+                        value: null
+                    },
+
+                    bloomTexture: {
+                        value:
+                            bloomComposer
+                                .renderTarget2
+                                .texture
+                    }
+                },
+
+                vertexShader: vertexshader,
+                fragmentShader: fragmentshader,
+                defines: {}
+
+            }),
+
+            "baseTexture"
+        );
+
+    finalPass.needsSwap = true;
+
+    composer.addPass(finalPass);
 
     // ==========================================
     // CONTROLES
@@ -145,12 +299,14 @@ function initThreeJS() {
 
     if (typeof THREE.OrbitControls !== 'undefined') {
 
-        controls = new THREE.OrbitControls(
-            camera,
-            renderer.domElement
-        );
+        controls =
+            new THREE.OrbitControls(
+                camera,
+                renderer.domElement
+            );
 
         controls.enablePan = false;
+
         controls.target.set(0, 0, 0);
 
         controls.update();
@@ -163,10 +319,15 @@ function initThreeJS() {
     );
 }
 
+// ==========================================
+// RESIZE
+// ==========================================
+
 function onWindowResize() {
 
     camera.aspect =
-        window.innerWidth / window.innerHeight;
+        window.innerWidth /
+        window.innerHeight;
 
     camera.updateProjectionMatrix();
 
@@ -175,22 +336,24 @@ function onWindowResize() {
         window.innerHeight
     );
 
-    if (composer) {
+    composer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
 
-        composer.setSize(
-            window.innerWidth,
-            window.innerHeight
-        );
-    }
+    bloomComposer.setSize(
+        window.innerWidth,
+        window.innerHeight
+    );
 }
 
 // ==========================================
-// SECCIÓN 2: CARGA MODELO
+// LOAD MODEL
 // ==========================================
 
 function loadModel() {
 
-    console.log("⚙️ Cargando modelo GLB...");
+    console.log("⚙️ Cargando modelo...");
 
     const loader = new THREE.GLTFLoader();
 
@@ -204,114 +367,104 @@ function loadModel() {
 
             model = gltf.scene;
 
-            model.scale.set(1, 1, 1);
-            model.position.set(0, 0, 0);
+            model.scale.set(1,1,1);
 
+            emissiveMeshes = [];
             emissiveMaterials = [];
 
             model.traverse((child) => {
 
-                if (child.isMesh && child.material) {
+                if (child.isMesh) {
 
-                    let materials = Array.isArray(child.material)
-                        ? child.material
-                        : [child.material];
+                    let mat = child.material;
 
-                    materials.forEach((mat, index) => {
+                    const meshName =
+                        child.name.toLowerCase();
 
-                        // ==========================================
-                        // FORZAR MATERIAL COMPATIBLE
-                        // ==========================================
+                    // ==========================================
+                    // OJOS Y BOCA
+                    // ==========================================
 
-                        if (!(mat instanceof THREE.MeshStandardMaterial)) {
+                    const isEmissivePart =
 
-                            const nuevoMaterial =
-                                new THREE.MeshStandardMaterial({
+                        meshName.includes('ojo') ||
+                        meshName.includes('eye') ||
+                        meshName.includes('boca') ||
+                        meshName.includes('mouth');
 
-                                    map: mat.map || null,
+                    // ==========================================
+                    // MATERIAL GLOW
+                    // ==========================================
 
-                                    color: 0x111111,
+                    if (isEmissivePart) {
 
-                                    emissive: 0xff0000,
+                        const glowMat =
+                            new THREE.MeshStandardMaterial({
 
-                                    emissiveIntensity: 3,
+                                color: 0x000000,
 
-                                    metalness: 0,
+                                emissive: 0xff2200,
 
-                                    roughness: 1
-                                });
+                                emissiveIntensity: 3,
 
-                            if (Array.isArray(child.material)) {
-                                child.material[index] = nuevoMaterial;
-                            } else {
-                                child.material = nuevoMaterial;
-                            }
+                                metalness: 0,
 
-                            mat = nuevoMaterial;
-                        }
+                                roughness: 1,
 
-                        const matName =
-                            mat.name.toLowerCase();
+                                toneMapped: false
+                            });
 
-                        const meshName =
-                            child.name.toLowerCase();
+                        child.material = glowMat;
 
-                        const esOjoOBoca =
-                            matName.includes('ojo') ||
-                            meshName.includes('ojo') ||
-                            matName.includes('eye') ||
-                            meshName.includes('eye') ||
-                            matName.includes('boca') ||
-                            meshName.includes('boca') ||
-                            matName.includes('mouth') ||
-                            meshName.includes('mouth');
+                        child.layers.enable(BLOOM_SCENE);
 
-                        // ==========================================
-                        // OJOS / BOCA
-                        // ==========================================
+                        emissiveMeshes.push(child);
 
-                        if (esOjoOBoca) {
+                        emissiveMaterials.push(glowMat);
 
-                            mat.color.setHex(0x000000);
+                        console.log(
+                            "🔥 Glow Layer:",
+                            child.name
+                        );
+                    }
 
-                            mat.emissive.setHex(0xff0000);
+                    // ==========================================
+                    // CASCO METÁLICO
+                    // ==========================================
 
-                            mat.emissiveIntensity = 5;
+                    else {
 
-                            mat.metalness = 0;
+                        const metalMat =
+                            new THREE.MeshStandardMaterial({
 
-                            mat.roughness = 1;
+                                color: 0x555555,
 
-                            emissiveMaterials.push(mat);
+                                metalness: 0.85,
 
-                            console.log(
-                                `🔥 Material LED detectado: ${child.name}`
-                            );
-                        }
+                                roughness: 0.42,
 
-                        // ==========================================
-                        // CASCO / METAL
-                        // ==========================================
+                                envMapIntensity: 0.2,
 
-                        else {
+                                emissive: 0x000000,
 
-                            mat.emissive.setHex(0x000000);
-                            mat.emissiveIntensity = 0;
+                                emissiveIntensity: 0,
 
-                            mat.color.setHex(0xaaaaaa);
+                                toneMapped: true
+                            });
 
-                            mat.metalness = 1.0;
-                            mat.roughness = 0.15;
-                        }
-                    });
+                        child.material = metalMat;
+
+                        child.layers.disable(BLOOM_SCENE);
+
+                        console.log(
+                            "🛡️ Metal:",
+                            child.name
+                        );
+                    }
                 }
             });
 
             scene.add(model);
-
-            console.log(
-                "✅ Modelo listo."
-            );
 
             // ==========================================
             // ANIMACIONES
@@ -322,7 +475,8 @@ function loadModel() {
                 gltf.animations.length > 0
             ) {
 
-                mixer = new THREE.AnimationMixer(model);
+                mixer =
+                    new THREE.AnimationMixer(model);
 
                 gltf.animations.forEach((clip) => {
 
@@ -347,7 +501,7 @@ function loadModel() {
         (error) => {
 
             console.error(
-                "❌ Error cargando modelo:",
+                "❌ Error modelo:",
                 error
             );
         }
@@ -355,20 +509,56 @@ function loadModel() {
 }
 
 // ==========================================
-// SECCIÓN 3: ANIMATE
+// DARKEN NON BLOOMED
+// ==========================================
+
+function darkenNonBloomed(obj) {
+
+    if (
+        obj.isMesh &&
+        BLOOM_SCENE !== obj.layers.mask
+    ) {
+
+        materials[obj.uuid] =
+            obj.material;
+
+        obj.material =
+            darkMaterial;
+    }
+}
+
+// ==========================================
+// RESTORE MATERIAL
+// ==========================================
+
+function restoreMaterial(obj) {
+
+    if (materials[obj.uuid]) {
+
+        obj.material =
+            materials[obj.uuid];
+
+        delete materials[obj.uuid];
+    }
+}
+
+// ==========================================
+// ANIMATE
 // ==========================================
 
 function animate() {
 
     requestAnimationFrame(animate);
 
-    const delta = clock.getDelta();
+    const delta =
+        clock.getDelta();
 
     if (mixer) mixer.update(delta);
 
     if (controls) controls.update();
 
-    const time = Date.now() * 0.002;
+    const time =
+        Date.now() * 0.002;
 
     // ==========================================
     // FLOTACIÓN
@@ -381,7 +571,7 @@ function animate() {
     }
 
     // ==========================================
-    // GLOW REACTIVO
+    // GLOW
     // ==========================================
 
     if (emissiveMaterials.length > 0) {
@@ -410,13 +600,11 @@ function animate() {
                 if (
                     dataArrayPlayback[i] > maxVolume
                 ) {
+
                     maxVolume =
                         dataArrayPlayback[i];
                 }
             }
-
-            // DEBUG
-            // console.log(maxVolume);
 
             emissiveMaterials.forEach((mat) => {
 
@@ -424,13 +612,13 @@ function animate() {
                     Math.random() * 4;
 
                 const intensity =
-                    20 +
-                    (maxVolume * 0.45) +
+                    8 +
+                    (maxVolume * 0.18) +
                     flicker;
 
                 mat.emissive.setRGB(
                     1,
-                    Math.random() * 0.15,
+                    Math.random() * 0.12,
                     0
                 );
 
@@ -448,8 +636,8 @@ function animate() {
             emissiveMaterials.forEach((mat) => {
 
                 const pulse =
-                    3 +
-                    Math.sin(time * 4) * 1.5;
+                    2.2 +
+                    Math.sin(time * 4.0) * 0.8;
 
                 mat.emissive.setRGB(
                     1,
@@ -463,30 +651,33 @@ function animate() {
         }
     }
 
+    // ==========================================
+    // SELECTIVE BLOOM RENDER
+    // ==========================================
+
+    scene.traverse(darkenNonBloomed);
+
+    bloomComposer.render();
+
+    scene.traverse(restoreMaterial);
+
     composer.render();
 }
 
 // ==========================================
-// SECCIÓN 4: SESIÓN
+// SESIÓN
 // ==========================================
 
 function reiniciarSesionTotem() {
 
     userId = generarNuevoId();
 
-    console.log(
-        "🔄 Nueva sesión:",
-        userId
-    );
-
     calibrarRuidoAmbiente();
 }
 
 function resetearTemporizador() {
 
-    clearTimeout(
-        temporizadorInactividad
-    );
+    clearTimeout(temporizadorInactividad);
 
     temporizadorInactividad =
         setTimeout(
@@ -496,7 +687,7 @@ function resetearTemporizador() {
 }
 
 // ==========================================
-// SECCIÓN 5: DEEPGRAM
+// DEEPGRAM
 // ==========================================
 
 async function conectarDeepgramYGrabar() {
@@ -519,10 +710,6 @@ async function conectarDeepgramYGrabar() {
             );
 
         deepgramSocket.onopen = () => {
-
-            console.log(
-                "⚡ Deepgram conectado."
-            );
 
             mediaRecorder =
                 new MediaRecorder(
@@ -590,50 +777,18 @@ async function conectarDeepgramYGrabar() {
 
                         transcripcionAcumulada +=
                             texto + " ";
-
-                        console.log(
-                            "📝",
-                            transcripcionAcumulada
-                        );
                     }
                 }
             };
 
-        deepgramSocket.onclose = () => {
-
-            console.log(
-                "⚠️ Deepgram desconectado..."
-            );
-
-            clearInterval(
-                keepAliveInterval
-            );
-
-            if (
-                mediaRecorder &&
-                mediaRecorder.state !== 'inactive'
-            ) {
-
-                mediaRecorder.stop();
-            }
-
-            setTimeout(
-                conectarDeepgramYGrabar,
-                1000
-            );
-        };
-
     } catch (error) {
 
-        console.error(
-            "❌ Error Deepgram:",
-            error
-        );
+        console.error(error);
     }
 }
 
 // ==========================================
-// SECCIÓN 6: MICRÓFONO
+// MICRÓFONO
 // ==========================================
 
 async function inicializarMicrofonoVAD() {
@@ -653,14 +808,11 @@ async function inicializarMicrofonoVAD() {
                 window.webkitAudioContext
             )();
 
-        // ==========================================
-        // ANALYZER PLAYBACK
-        // ==========================================
-
         reproductorAnalyser =
             audioContext.createAnalyser();
 
         reproductorAnalyser.fftSize = 512;
+
         reproductorAnalyser.smoothingTimeConstant = 0.1;
 
         dataArrayPlayback =
@@ -668,15 +820,10 @@ async function inicializarMicrofonoVAD() {
                 reproductorAnalyser.frequencyBinCount
             );
 
-        // ==========================================
-        // ANALYZER MIC
-        // ==========================================
-
         analyser =
             audioContext.createAnalyser();
 
         analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.2;
 
         microphone =
             audioContext.createMediaStreamSource(
@@ -687,32 +834,21 @@ async function inicializarMicrofonoVAD() {
 
         await conectarDeepgramYGrabar();
 
-        console.log(
-            "🎤 Micrófono conectado."
-        );
-
         calibrarRuidoAmbiente();
 
     } catch (err) {
 
-        console.error(
-            "❌ Error micrófono:",
-            err
-        );
+        console.error(err);
     }
 }
 
 // ==========================================
-// SECCIÓN 7: CALIBRACIÓN
+// CALIBRACIÓN
 // ==========================================
 
 function calibrarRuidoAmbiente() {
 
     isCalibrating = true;
-
-    console.log(
-        "⚙️ Calibrando ruido..."
-    );
 
     let totalVolume = 0;
     let sampleCount = 0;
@@ -745,7 +881,7 @@ function calibrarRuidoAmbiente() {
 
             sampleCount++;
 
-        }, 100);
+        },100);
 
     setTimeout(() => {
 
@@ -762,18 +898,13 @@ function calibrarRuidoAmbiente() {
 
         isCalibrating = false;
 
-        console.log(
-            "✅ Threshold:",
-            dynamicVolumeThreshold
-        );
-
         monitorearVolumen();
 
-    }, 3000);
+    },3000);
 }
 
 // ==========================================
-// SECCIÓN 8: VAD
+// VAD
 // ==========================================
 
 function monitorearVolumen() {
@@ -822,18 +953,12 @@ function monitorearVolumen() {
 
         if (!isUserSpeaking) {
 
-            console.log(
-                "🎙️ Voz detectada"
-            );
-
             isUserSpeaking = true;
         }
 
         if (silenceTimer) {
 
-            clearTimeout(
-                silenceTimer
-            );
+            clearTimeout(silenceTimer);
 
             silenceTimer = null;
         }
@@ -867,9 +992,9 @@ function monitorearVolumen() {
                             transcripcionAcumulada = "";
                         }
 
-                    }, 400);
+                    },400);
 
-                }, SILENCE_DURATION);
+                },SILENCE_DURATION);
         }
     }
 
@@ -879,41 +1004,29 @@ function monitorearVolumen() {
 }
 
 // ==========================================
-// SECCIÓN 9: IA + PLAYBACK
+// IA + TTS
 // ==========================================
 
 async function enviarTextoAlCerebro(textoUsuario) {
 
     try {
 
-        console.log(
-            "🧠 Pensando..."
-        );
-
         const respuestaChat =
             await fetch(
                 `/api/chat?userId=${userId}`,
                 {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
+                    method:'POST',
+                    headers:{
+                        'Content-Type':'application/json'
                     },
-                    body: JSON.stringify({
-                        text: textoUsuario.trim()
+                    body:JSON.stringify({
+                        text:textoUsuario.trim()
                     })
                 }
             );
 
-        if (!respuestaChat.ok) {
-            throw new Error("Error IA");
-        }
-
         const data =
             await respuestaChat.json();
-
-        console.log(
-            "🔊 Generando voz..."
-        );
 
         const audioResponse =
             await fetch(
@@ -933,10 +1046,6 @@ async function enviarTextoAlCerebro(textoUsuario) {
 
         source.buffer = audioBuffer;
 
-        // ==========================================
-        // CONEXIONES AUDIO
-        // ==========================================
-
         source.connect(
             reproductorAnalyser
         );
@@ -947,50 +1056,28 @@ async function enviarTextoAlCerebro(textoUsuario) {
 
         avatarHablando = true;
 
-        console.log(
-            "🔥 Glow reactivo ACTIVADO"
-        );
-
         source.start(0);
 
         source.onended = () => {
 
             avatarHablando = false;
 
-            resetearTemporizador();
+            emissiveMaterials.forEach((mat) => {
 
-            emissiveMaterials.forEach(
-                (mat) => {
-
-                    mat.emissiveIntensity = 3;
-                }
-            );
-
-            console.log(
-                "⏹️ Avatar en silencio"
-            );
+                mat.emissiveIntensity = 2.5;
+            });
         };
 
-    } catch (error) {
+    } catch(error) {
 
-        console.error(
-            "❌ Error comunicación:",
-            error
-        );
+        console.error(error);
 
         avatarHablando = false;
-
-        emissiveMaterials.forEach(
-            (mat) => {
-
-                mat.emissiveIntensity = 3;
-            }
-        );
     }
 }
 
 // ==========================================
-// SECCIÓN 10: INIT
+// INIT
 // ==========================================
 
 document.addEventListener(
@@ -1023,3 +1110,4 @@ document.addEventListener(
         }
     }
 );
+```
