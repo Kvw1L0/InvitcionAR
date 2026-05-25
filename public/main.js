@@ -42,7 +42,7 @@ let dataArrayPlayback;
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js: Casco Húmedo y Fuego Neón...");
+    console.log("⚙️ Inicializando Three.js: Casco Húmedo y Fuego Neón Hiper-Reactivo...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
@@ -129,7 +129,7 @@ function loadModel() {
                         mat.color.setHex(0x000000);    // Base NEGRA para evitar que la luz blanca lo decolore
                         mat.metalness = 0.0;           // Cero metal
                         mat.roughness = 1.0;           // Cero brillo plástico
-                        mat.emissiveIntensity = 2.0;   // Intensidad idle base
+                        mat.emissiveIntensity = 3.0;   // Intensidad idle base un poco más alta
                         
                         emissiveMaterials.push(mat); 
                         console.log(`🔥 Fuego Fotónico inyectado en: ${child.name}`);
@@ -181,7 +181,7 @@ function animate() {
     // ==========================================
     if (emissiveMaterials.length > 0) {
         
-        // ESTADO 1: HABLANDO (Destellos hipersensibles)
+        // ESTADO 1: HABLANDO (Destellos súper agresivos)
         if (avatarHablando && reproductorAnalyser) {
             reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
             let sum = 0;
@@ -190,15 +190,16 @@ function animate() {
             }
             const averageVolume = sum / dataArrayPlayback.length; 
             
-            // Umbral súper reactivo: estalla de inmediato con la voz (Base 2.0 + hasta 15.0 de potencia extra)
-            const dynamicIntensity = 2.0 + (averageVolume * (15.0 / 255.0));
+            // EL AJUSTE MAESTRO: Pasamos de multiplicador 15 a multiplicador 80.
+            // Si el volumen promedio es 50, la intensidad será 3.0 + 15.6 = 18.6 (Antes apenas llegaba a 5.0)
+            const dynamicIntensity = 3.0 + (averageVolume * (80.0 / 255.0));
             emissiveMaterials.forEach(mat => mat.emissiveIntensity = dynamicIntensity);
         } 
         
-        // ESTADO 2: SILENCIO (Respiración suave de lava)
+        // ESTADO 2: SILENCIO (Respiración de lava un poco más viva)
         else {
-            // Oscila suavemente con matemática sinusoidal (entre 1.0 y 3.0)
-            const idlePulse = 2.0 + Math.sin(time * 3.0) * 1.0; 
+            // Oscila entre 1.5 y 4.5. Lo suficiente para que no se vea apagado, pero no tan fuerte como cuando habla.
+            const idlePulse = 3.0 + Math.sin(time * 4.0) * 1.5; 
             emissiveMaterials.forEach(mat => mat.emissiveIntensity = idlePulse);
         }
     }
@@ -372,7 +373,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
         fuenteAudio.connect(reproductorAnalyser);
         reproductorAnalyser.connect(audioContext.destination);
         
-        console.log("🔥 Destellos reactivos de voz activados.");
+        console.log("🔥 Destellos reactivos de voz activados (Multiplicador x80).");
         
         await reproductor.play();
         
