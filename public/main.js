@@ -1,5 +1,5 @@
 // ==========================================
-// SECCIÓN 0: VARIABLES GLOBALES (3D, AUDIO Y ANIMACIÓN)
+// SECCIÓN 0: VARIABLES GLOBALES
 // ==========================================
 
 function generarNuevoId() {
@@ -15,19 +15,17 @@ let scene, camera, renderer, model, mixer, composer, bloomPass;
 let controls, clock = new THREE.Clock(); 
 let emissiveMaterials = []; 
 
-// --- Variables de Animación y Estados (NUEVO) ---
+// --- Variables de Animación y Estados ---
 let iaPensando = false; 
 let avatarHablando = false; 
 
-// Interpoladores (LERP) para movimientos fluidos
-let currentMouthScale = 1.0;
-let targetMouthScale = 1.0;
+// Interpoladores (LERP) para movimientos fluidos (Boca fija, solo giros)
 let currentRotationX = 0;
 let targetRotationX = 0;
 let currentRotationY = 0;
 let targetRotationY = 0;
-const LERP_FACTOR = 0.2; // Controla la suavidad de la boca y la luz
 const LERP_ROTATION = 0.05; // Controla la suavidad del giro de cabeza
+const LERP_LIGHT = 0.15; // Controla la suavidad del Lipsync lumínico
 
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c'; 
 
@@ -45,11 +43,11 @@ let transcripcionAcumulada = "";
 let dataArrayPlayback;   
 
 // ==========================================
-// SECCIÓN 1: MOTOR GRÁFICO (NÚCLEO RADIACTIVO)
+// SECCIÓN 1: MOTOR GRÁFICO (NÚCLEO RADIACTIVO CONTENIDO)
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ SECCIÓN 1: Inicializando Motor - HDR y Efecto Plasma...");
+    console.log("⚙️ SECCIÓN 1: Inicializando Motor - HDR Dinámico Contenido...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
@@ -62,7 +60,7 @@ function initThreeJS() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor( 0x000000, 1 ); 
-
+    
     // ACESFilmic oscurece los tonos base y permite que los emisores altos brillen como fuego
     renderer.outputEncoding = THREE.sRGBEncoding; 
     renderer.toneMapping = THREE.ACESFilmicToneMapping; 
@@ -78,8 +76,8 @@ function initThreeJS() {
     fillLight.position.set(-5, 3, -5);
     scene.add(fillLight);
 
-    // BLOOM CALIBRADO: Threshold en 0.85 asegura que solo el "núcleo" de la luz genere resplandor
-    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 1.2, 0.85);
+    // BLOOM CALIBRADO: Threshold alto y radio amplio para un efecto "Lava Sangrante" contained
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 2.5, 1.5, 0.85);
     
     composer = new THREE.EffectComposer(renderer);
     composer.addPass(new THREE.RenderPass(scene, camera));
@@ -118,29 +116,29 @@ function loadModel() {
                     
                     // OJOS Y BOCA -> NÚCLEO RADIACTIVO
                     if (name.includes('ojo') || name.includes('boca')) {
-                        mat.color.setHex(0x000000); // Base negra para contraste extremo
-                        mat.emissive.setHex(0xff0000); // Rojo puro
-                        mat.emissiveIntensity = 2.0;   // Intensidad base
+                        mat.color.setHex(0x000000); // Base negra absoluta para contraste extremo
+                        mat.emissive.setHex(0xff0000); // Rojo radiactivo puro
+                        mat.emissiveIntensity = 2.0;   // Intensidad idle base reducida
                         mat.metalness = 0.0;           
                         mat.roughness = 1.0;           
-                        // Añadimos una propiedad custom para guardar su intensidad objetivo para el LERP
+                        // Propiedad custom para guardar su intensidad objetivo para el LERP de luz
                         mat.userData.targetIntensity = 2.0; 
                         emissiveMaterials.push(mat); 
                     } 
-                    // CASCO -> METAL PULIDO (Cero contaminación de luz)
+                    // CASCO -> ACERO HÚMEDO (Cero contaminación de luz)
                     else {
                         mat.emissive.setHex(0x000000); 
                         mat.emissiveIntensity = 0;
                         mat.metalness = 1.0;  
                         mat.roughness = 0.15; 
-                        mat.color.setHex(0x555555); // Titanio
+                        mat.color.setHex(0xaaaaaa); // Gris plata pulido
                     }
                 });
             }
         });
 
         scene.add(model);
-        console.log("✅ Modelo cargado. Materiales aislados.");
+        console.log("✅ Modelo cargado. Boca fijada, solo brillo.");
         document.getElementById('overlay').style.display = 'none';
         animate(); 
     });
@@ -306,7 +304,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
         // --- ESTADO: HABLANDO ---
         iaPensando = false; 
         avatarHablando = true; 
-        console.log("🔥 Lip-Sync y Animación Facial activada.");
+        console.log("🔥 Lip-Sync Fotónico activado (Boca estática).");
         
         source.start(0);
         
@@ -329,7 +327,7 @@ function reiniciarSesionTotem() {
 }
 
 // ==========================================
-// SECCIÓN 7: MOTOR DE ANIMACIÓN (LERP + SINCRO MÁXIMA)
+// SECCIÓN 7: MOTOR DE ANIMACIÓN (LIP-SYNC LUZ + MOVIMIENTO ERRÁTICO)
 // ==========================================
 
 function animate() {
@@ -338,13 +336,13 @@ function animate() {
     
     // 1. GESTIÓN DE ESTADOS (MÁQUINA DE ANIMACIÓN)
     if (iaPensando) {
-        // Gira la cabeza buscando información en la nube
-        targetRotationY = Math.sin(time * 2.0) * 0.3; // Lados
-        targetRotationX = Math.cos(time * 1.5) * 0.15 - 0.05; // Arriba/Abajo
-        targetMouthScale = 1.0; // Boca cerrada
+        // MEJORA: Repertorio de movimientos estrambóticos de "Cómputo"
+        // Mezclamos frecuencias complejas no múltiplos para que el balanceo sea impredecible
+        targetRotationY = Math.sin(time * 3.1) * 0.25 + Math.cos(time * 5.7) * 0.1; // Giro más rápido y errático
+        targetRotationX = Math.cos(time * 2.2) * 0.15 - 0.12 + Math.sin(time * 4.3) * 0.08; // Balanceo vertical complejo y "arriba/abajo"
         
-        // Ojos palpitan como si estuviera procesando datos
-        emissiveMaterials.forEach(mat => mat.userData.targetIntensity = 2.0 + Math.sin(time * 8.0) * 4.0);
+        // Ojos palpitan rápido como si estuviera procesando datos
+        emissiveMaterials.forEach(mat => mat.userData.targetIntensity = 2.0 + Math.sin(time * 12.0) * 5.0);
         
     } else if (avatarHablando && reproductorAnalyser) {
         // Mira fijamente al usuario mientras habla
@@ -359,18 +357,18 @@ function animate() {
         
         const volumeRatio = maxVolume / 255.0;
         
-        // Mapeo a apertura de boca (Escala Y)
-        targetMouthScale = 1.0 + (volumeRatio * 0.45); // Se abre hasta 45% más
-        
-        // Mapeo a intensidad lumínica (Picos altos queman en blanco, bajos quedan rojos)
+        // CORRECCIÓN: Lip-Sync Fotónico Puro (Boca estática)
+        // Eliminamos el Lipsync geométrico. La mandíbula se queda en su sitio por defecto.
+
+        // Mapeo exclusivo a intensidad lumínica (Picos altos queman, bajos quedan rojos)
         const reactIntensity = 2.0 + (volumeRatio * volumeRatio) * 35.0; 
+        // Esta intensidad se aplica a TODOS los emissiveMaterials, incluyendo la BOCA fija.
         emissiveMaterials.forEach(mat => mat.userData.targetIntensity = reactIntensity);
         
     } else {
         // Estado Reposo: Micro movimientos orgánicos
         targetRotationY = Math.sin(time * 0.5) * 0.05; 
         targetRotationX = 0;
-        targetMouthScale = 1.0;
         // Respiración suave tipo lava
         emissiveMaterials.forEach(mat => mat.userData.targetIntensity = 2.0 + Math.sin(time * 3.0) * 1.0);
     }
@@ -378,7 +376,6 @@ function animate() {
     // 2. APLICACIÓN DE MATEMÁTICA FLUIDA (LERP)
     currentRotationX += (targetRotationX - currentRotationX) * LERP_ROTATION;
     currentRotationY += (targetRotationY - currentRotationY) * LERP_ROTATION;
-    currentMouthScale += (targetMouthScale - currentMouthScale) * LERP_FACTOR;
 
     // 3. APLICACIÓN A LA MALLA (3D)
     if (model) {
@@ -387,17 +384,12 @@ function animate() {
         model.rotation.y = currentRotationY;
         model.position.y = Math.sin(time) * 0.1; 
 
-        // Modificación de geometría (Boca)
-        model.traverse((child) => {
-            if (child.name.toLowerCase().includes('boca')) {
-                child.scale.set(1, currentMouthScale, 1); 
-            }
-        });
+        // Modificación geométrica Eliminada para la boca. Se mantendrá estática.
     }
 
-    // 4. APLICACIÓN DE LUZ FLUIDA
+    // 4. APLICACIÓN DE LUZ FLUIDA (LERP LIGHT - Ojos y Boca Brillant en su lugar)
     emissiveMaterials.forEach(mat => {
-        mat.emissiveIntensity += (mat.userData.targetIntensity - mat.emissiveIntensity) * LERP_FACTOR;
+        mat.emissiveIntensity += (mat.userData.targetIntensity - mat.emissiveIntensity) * LERP_LIGHT;
     });
 
     if (composer) composer.render();
