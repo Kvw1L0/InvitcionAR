@@ -42,7 +42,7 @@ let dataArrayPlayback;
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js con HDR Dinámico...");
+    console.log("⚙️ Inicializando Three.js con HDR Dinámico (Efecto Plasma)...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
@@ -73,7 +73,7 @@ function initThreeJS() {
     scene.add(fillLight);
 
     // BLOOM (Glow LED)
-    // Fuerza, Radio, Umbral
+    // Fuerza(3.0), Radio(1.5), Umbral(0.9) -> Contenido, no desparramado
     bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 1.5, 0.9);
     
     composer = new THREE.EffectComposer(renderer);
@@ -121,10 +121,9 @@ function loadModel() {
                     const matName = mat.name.toLowerCase();
                     const meshName = child.name.toLowerCase();
 
-                    // OJOS Y BOCA -> FUEGO ROJO PURO (Efecto "Lava")
+                    // OJOS Y BOCA -> FUEGO ROJO PURO (Efecto Plasma)
                     if (matName.includes('ojo') || meshName.includes('ojo') || matName.includes('boca') || meshName.includes('boca')) {
-                        // LA CLAVE ESTÉTICA: Material base negro puro
-                        mat.color.setHex(0x000000); // Evita el color plano/rosa
+                        mat.color.setHex(0x000000); // Base negra pura para contraste
                         mat.emissive.setHex(0xff0000); // Emisión roja máxima
                         mat.emissiveIntensity = 3.0;   // Intensidad idle base
                         mat.metalness = 0.0;           
@@ -133,13 +132,13 @@ function loadModel() {
                         emissiveMaterials.push(mat); 
                         console.log(`🔥 Fuego Fotónico inyectado en: ${child.name}`);
                     } 
-                    // CASCO -> ACERO HÚMEDO BRILLANTE
+                    // CASCO Y CABEZA -> ACERO OSCURO Y BRILLANTE
                     else {
                         mat.emissive.setHex(0x000000); 
                         mat.emissiveIntensity = 0;
-                        mat.metalness = 1.0;  // Acero puro
-                        mat.roughness = 0.15; // Húmedo/espejo pulido
-                        mat.color.setHex(0xaaaaaa); // Gris plata
+                        mat.metalness = 1.0;  
+                        mat.roughness = 0.15; 
+                        mat.color.setHex(0xaaaaaa); // Gris plata pulido
                         console.log(`🛡️ Acero Húmedo configurado en: ${child.name}`);
                     }
                 });
@@ -176,7 +175,7 @@ function animate() {
     }
 
     // ==========================================
-    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ)
+    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ, LECTURA DE PICOS AGRESIVA)
     // ==========================================
     if (emissiveMaterials.length > 0) {
         
@@ -192,9 +191,9 @@ function animate() {
                 }
             }
             
-            // Inteligencia de escalado: Intensidad extrema y reactiva
-            // Base 3.0 + hasta 60 de potencia extra dependiendo del volumen
-            const dynamicIntensity = 3.0 + (maxVolume / 255.0) * 60.0;
+            // Curva de escalado exponencial: Intensidad extrema (Volumen al cuadrado)
+            const volumeRatio = maxVolume / 255.0;
+            const dynamicIntensity = 3.0 + (volumeRatio * volumeRatio) * 120.0;
             
             emissiveMaterials.forEach(mat => {
                 mat.emissiveIntensity = dynamicIntensity;
@@ -237,7 +236,6 @@ async function conectarDeepgramYGrabar() {
         const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&mimetype=audio/webm';
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         deepgramSocket.onopen = () => {
-            console.log("⚡ Conexión en vivo con Deepgram establecida.");
             mediaRecorder = new MediaRecorder(globalStream, { mimeType: 'audio/webm' });
             mediaRecorder.ondataavailable = (event) => {
                 if (event.data.size > 0 && deepgramSocket.readyState === 1) {
@@ -262,11 +260,8 @@ async function conectarDeepgramYGrabar() {
             }
         };
         deepgramSocket.onclose = () => {
-            console.log("⚠️ Deepgram desconectado. Limpiando y reconectando...");
             clearInterval(keepAliveInterval);
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-            }
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
             setTimeout(conectarDeepgramYGrabar, 1000); 
         };
     } catch (error) {
@@ -274,15 +269,21 @@ async function conectarDeepgramYGrabar() {
     }
 }
 
-async function inicializarMicrofonoVAD() {
+// --- CREACIÓN FORZADA DEL CONTEXTO DE AUDIO AL CLIC ---
+async function inicializarAudioYMicrofono() {
     try {
-        globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Obligatorio crear el contexto DENTRO de la función disparada por el botón
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+
         reproductorAnalyser = audioContext.createAnalyser();
         reproductorAnalyser.fftSize = 256; 
         dataArrayPlayback = new Uint8Array(reproductorAnalyser.frequencyBinCount);
 
+        globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
         analyser.smoothingTimeConstant = 0.2;
@@ -290,16 +291,15 @@ async function inicializarMicrofonoVAD() {
         microphone.connect(analyser);
         
         await conectarDeepgramYGrabar(); 
-        console.log("🎤 Micrófono conectado.");
+        console.log("🎤 Micrófono y Analizador conectados correctamente.");
         calibrarRuidoAmbiente();
     } catch (err) {
-        console.error("Error micrófono:", err);
+        console.error("Error inicializando audio:", err);
     }
 }
 
 function calibrarRuidoAmbiente() {
     isCalibrating = true;
-    console.log("⚙️ Calibrando ruido de fondo...");
     let totalVolume = 0;
     let sampleCount = 0;
     const calibracionInterval = setInterval(() => {
@@ -315,7 +315,6 @@ function calibrarRuidoAmbiente() {
         baseNoiseFloor = totalVolume / sampleCount;
         dynamicVolumeThreshold = baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN;
         isCalibrating = false;
-        console.log(`✅ Calibración lista. Umbral: ${dynamicVolumeThreshold.toFixed(2)}`);
         monitorearVolumen();
     }, 3000);
 }
@@ -333,10 +332,7 @@ function monitorearVolumen() {
     
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
-        if (!isUserSpeaking) {
-            console.log(`🎙️ Voz detectada...`);
-            isUserSpeaking = true;
-        }
+        if (!isUserSpeaking) isUserSpeaking = true;
         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
     } else {
         if (isUserSpeaking && !silenceTimer) {
@@ -356,12 +352,12 @@ function monitorearVolumen() {
 }
 
 // ==========================================
-// SECCIÓN 3.5: LÓGICA DE PLAYBACK FOTÓNICO (BYPASS CORS)
+// SECCIÓN 3.5: LÓGICA DE PLAYBACK (BYPASS CORS)
 // ==========================================
 
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
-        console.log("🧠 Pensando respuesta...");
+        console.log("🧠 Pensando respuesta para:", textoUsuario);
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -370,16 +366,17 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (!respuestaChat.ok) throw new Error("Error IA");
         const data = await respuestaChat.json();
         
-        console.log("⬇️ Descargando audio para inyección directa...");
+        console.log("🤖 IA responde:", data.text);
         
-        // EL TRUCO MAESTRO: Descargamos el audio como datos puros para engañar la seguridad del navegador
+        // VITAL: Asegurar que el contexto está despierto antes de inyectar audio
+        if (audioContext && audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+        
         const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
         const arrayBuffer = await audioResponse.arrayBuffer();
-        
-        // Decodificamos el audio dentro del contexto
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
         
-        // Creamos la fuente de audio interna
         const source = audioContext.createBufferSource();
         source.buffer = audioBuffer;
         
@@ -388,24 +385,24 @@ async function enviarTextoAlCerebro(textoUsuario) {
         reproductorAnalyser.connect(audioContext.destination);
         
         avatarHablando = true; 
-        console.log("🔥 Destellos reactivos de voz activados (Lectura de Picos).");
+        console.log("🔥 Destellos reactivos activados.");
         
-        // Reproducir
         source.start(0);
         
         source.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0); // Fuerza la vuelta a idle
-            console.log("⏹️ Avatar en silencio (Vuelve a respiración).");
+            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
         };
     } catch (error) {
         console.error("Error comunicando:", error);
         avatarHablando = false;
-        emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0);
     }
 }
 
+// ==========================================
+// ARRANQUE DEL SISTEMA
+// ==========================================
 document.addEventListener('DOMContentLoaded', () => {
     const btnIniciar = document.getElementById('btnIniciar');
     if (btnIniciar) {
@@ -413,7 +410,8 @@ document.addEventListener('DOMContentLoaded', () => {
             btnIniciar.style.display = 'none'; 
             initThreeJS();
             loadModel();
-            inicializarMicrofonoVAD(); 
+            // LA CLAVE: Inicializar todo el motor de audio exactamente aquí
+            inicializarAudioYMicrofono(); 
             resetearTemporizador();
         });
     }
