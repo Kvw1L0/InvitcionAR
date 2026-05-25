@@ -42,7 +42,7 @@ let dataArrayPlayback;
 // ==========================================
 
 function initThreeJS() {
-    console.log("⚙️ Inicializando Three.js con HDR Dinámico (Efecto Neón)...");
+    console.log("⚙️ Inicializando Three.js con HDR Dinámico (Efecto Neón Contenido)...");
     const container = document.getElementById('threejs-container');
 
     scene = new THREE.Scene();
@@ -56,14 +56,13 @@ function initThreeJS() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor( 0x000000, 1 ); 
 
-    // Activar renderizado HDR vital para materiales emisivos (Glow)
     // Usamos NoToneMapping para este efecto neón de "lava" carmesí puro.
     renderer.outputEncoding = THREE.sRGBEncoding; 
     renderer.toneMapping = THREE.NoToneMapping; 
     renderer.toneMappingExposure = 1.0;
     container.appendChild(renderer.domElement);
 
-    // ILUMINACIÓN METÁLICA (Húmeda)
+    // ILUMINACIÓN METÁLICA (Húmeda y Contrastada)
     scene.add(new THREE.AmbientLight(0xffffff, 1.2)); 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 2.0); 
     directionalLight.position.set(0, 2, 5);
@@ -73,9 +72,8 @@ function initThreeJS() {
     fillLight.position.set(-5, 3, -5);
     scene.add(fillLight);
 
-    // BLOOM (Glow "Sangrante") 
-    // Fuerza, Radio, Umbral
-    // Calibrado con radio amplio (1.5) y fuerza alta (3.0) para un efecto expansivo.
+    // BLOOM (Glow "Sangrante" pero acotado) 
+    // Fuerza(3.0), Radio(1.5), Umbral(0.9) -> El umbral alto evita manchar el metal
     bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 1.5, 0.9);
     
     composer = new THREE.EffectComposer(renderer);
@@ -126,7 +124,7 @@ function loadModel() {
                     // OJOS Y BOCA -> FUEGO ROJO PURO (Efecto "Lava")
                     if (matName.includes('ojo') || meshName.includes('ojo') || matName.includes('boca') || meshName.includes('boca')) {
                         // LA CLAVE ESTÉTICA: Material base negro puro
-                        mat.color.setHex(0x000000); // Evita el color plano/rosa
+                        mat.color.setHex(0x000000);    // Evita el color plano/rosa
                         mat.emissive.setHex(0xff0000); // Emisión roja máxima
                         mat.emissiveIntensity = 3.0;   // Intensidad idle base
                         mat.metalness = 0.0;           
@@ -141,7 +139,7 @@ function loadModel() {
                         mat.emissiveIntensity = 0;
                         mat.metalness = 1.0;  // Acero puro
                         mat.roughness = 0.15; // Húmedo/espejo pulido
-                        mat.color.setHex(0xaaaaaa); // Gris plata
+                        mat.color.setHex(0xaaaaaa); // Gris plata oscuro
                         console.log(`🛡️ Acero Húmedo configurado en: ${child.name}`);
                     }
                 });
@@ -194,9 +192,9 @@ function animate() {
                 }
             }
             
-            // Inteligencia de escalado: Intensidad extrema
-            // Base 3.0 + hasta 60 de potencia extra dependiendo del volumen
-            const dynamicIntensity = 3.0 + (maxVolume / 255.0) * 60.0;
+            // Curva de escalado exponencial: Intensidad extrema y reactiva
+            const volumeRatio = maxVolume / 255.0;
+            const dynamicIntensity = 3.0 + (volumeRatio * volumeRatio) * 60.0;
             
             emissiveMaterials.forEach(mat => {
                 mat.emissiveIntensity = dynamicIntensity;
@@ -218,7 +216,7 @@ function animate() {
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (INTACTO)
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS
 // ==========================================
 
 function reiniciarSesionTotem() {
@@ -279,7 +277,12 @@ async function conectarDeepgramYGrabar() {
 async function inicializarMicrofonoVAD() {
     try {
         globalStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // IMPORTANTE: Asegurar inicialización y reanudación del AudioContext
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
         
         reproductorAnalyser = audioContext.createAnalyser();
         reproductorAnalyser.fftSize = 256; 
@@ -292,7 +295,7 @@ async function inicializarMicrofonoVAD() {
         microphone.connect(analyser);
         
         await conectarDeepgramYGrabar(); 
-        console.log("🎤 Micrófono conectado.");
+        console.log("🎤 Micrófono conectado y analizadores listos.");
         calibrarRuidoAmbiente();
     } catch (err) {
         console.error("Error micrófono:", err);
@@ -336,7 +339,7 @@ function monitorearVolumen() {
     if (averageVolume > dynamicVolumeThreshold) {
         resetearTemporizador(); 
         if (!isUserSpeaking) {
-            console.log(`🎙️ Voz detectada...`);
+            console.log(`🎙️ Voz detectada. Capturando frase...`);
             isUserSpeaking = true;
         }
         if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
@@ -347,6 +350,7 @@ function monitorearVolumen() {
                 silenceTimer = null;
                 setTimeout(() => {
                     if (!isUserSpeaking && transcripcionAcumulada.trim() !== "") {
+                        console.log("🚀 Frase terminada. Enviando al cerebro:", transcripcionAcumulada);
                         enviarTextoAlCerebro(transcripcionAcumulada);
                         transcripcionAcumulada = ""; 
                     }
@@ -363,7 +367,7 @@ function monitorearVolumen() {
 
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
-        console.log("🧠 Pensando respuesta...");
+        console.log("🧠 Pensando respuesta para:", textoUsuario);
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -372,9 +376,14 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (!respuestaChat.ok) throw new Error("Error IA");
         const data = await respuestaChat.json();
         
+        console.log("🤖 IA responde:", data.text);
         console.log("⬇️ Descargando audio para inyección directa...");
         
-        // EL TRUCO MAESTRO: Descargamos el audio como datos puros para engañar la seguridad del navegador
+        // VITAL: Asegurar que el contexto está despierto antes de inyectar audio
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+        
         const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
         const arrayBuffer = await audioResponse.arrayBuffer();
         
@@ -390,7 +399,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
         reproductorAnalyser.connect(audioContext.destination);
         
         avatarHablando = true; 
-        console.log("🔥 Destellos reactivos de voz activados (Lectura de Picos).");
+        console.log("🔥 Lip-Sync Orgánico (Glow HDR) activado.");
         
         // Reproducir
         source.start(0);
@@ -398,13 +407,11 @@ async function enviarTextoAlCerebro(textoUsuario) {
         source.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0); // Fuerza la vuelta a idle
-            console.log("⏹️ Avatar en silencio (Vuelve a respiración).");
+            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
         };
     } catch (error) {
         console.error("Error comunicando:", error);
         avatarHablando = false;
-        emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0);
     }
 }
 
