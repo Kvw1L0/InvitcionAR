@@ -75,7 +75,6 @@ function initThreeJS() {
     scene.add(fillLight);
 
     // BLOOM (Glow Sangrante) 
-    // Fuerza brutal (3.0), Radio amplio (1.5), Umbral calibrado (0.9)
     bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 1.5, 0.9);
     
     composer = new THREE.EffectComposer(renderer);
@@ -126,10 +125,10 @@ function loadModel() {
                     // OJOS Y BOCA -> FUEGO ROJO PURO (Sin reflejos)
                     if (matName.includes('ojo') || meshName.includes('ojo') || matName.includes('boca') || meshName.includes('boca')) {
                         mat.emissive.setHex(0xff0000); // Emisión roja máxima
-                        mat.color.setHex(0x000000);    // Base NEGRA para evitar que la luz blanca lo decolore
+                        mat.color.setHex(0x000000);    // Base NEGRA
                         mat.metalness = 0.0;           // Cero metal
                         mat.roughness = 1.0;           // Cero brillo plástico
-                        mat.emissiveIntensity = 3.0;   // Intensidad idle base un poco más alta
+                        mat.emissiveIntensity = 3.0;   // Intensidad idle base
                         
                         emissiveMaterials.push(mat); 
                         console.log(`🔥 Fuego Fotónico inyectado en: ${child.name}`);
@@ -139,7 +138,7 @@ function loadModel() {
                         mat.emissive.setHex(0x000000); 
                         mat.emissiveIntensity = 0;
                         mat.metalness = 1.0;  // Acero puro
-                        mat.roughness = 0.15; // Muy bajo para look húmedo/espejo pulido
+                        mat.roughness = 0.15; // Húmedo/espejo pulido
                         mat.color.setHex(0xaaaaaa); // Gris plata
                         console.log(`🛡️ Acero Húmedo configurado en: ${child.name}`);
                     }
@@ -177,30 +176,37 @@ function animate() {
     }
 
     // ==========================================
-    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ, SIN MOVER MALLA)
+    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ, LECTURA DE PICOS)
     // ==========================================
     if (emissiveMaterials.length > 0) {
         
-        // ESTADO 1: HABLANDO (Destellos súper agresivos)
+        // ESTADO 1: HABLANDO (Destellos súper agresivos leyendo Picos)
         if (avatarHablando && reproductorAnalyser) {
             reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
-            let sum = 0;
-            for (let i = 0; i < dataArrayPlayback.length; i++) {
-                sum += dataArrayPlayback[i];
-            }
-            const averageVolume = sum / dataArrayPlayback.length; 
             
-            // EL AJUSTE MAESTRO: Pasamos de multiplicador 15 a multiplicador 80.
-            // Si el volumen promedio es 50, la intensidad será 3.0 + 15.6 = 18.6 (Antes apenas llegaba a 5.0)
-            const dynamicIntensity = 3.0 + (averageVolume * (80.0 / 255.0));
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = dynamicIntensity);
+            // LA MAGIA: En lugar de promediar, buscamos la frecuencia más fuerte (Pico)
+            let maxVolume = 0;
+            for (let i = 0; i < dataArrayPlayback.length; i++) {
+                if (dataArrayPlayback[i] > maxVolume) {
+                    maxVolume = dataArrayPlayback[i];
+                }
+            }
+            
+            // Si hay voz fuerte (maxVolume cercano a 255), la luz estalla hasta 80.0
+            const dynamicIntensity = 3.0 + (maxVolume * (77.0 / 255.0));
+            
+            emissiveMaterials.forEach(mat => {
+                mat.emissiveIntensity = dynamicIntensity;
+            });
         } 
         
-        // ESTADO 2: SILENCIO (Respiración de lava un poco más viva)
+        // ESTADO 2: SILENCIO (Respiración de lava)
         else {
-            // Oscila entre 1.5 y 4.5. Lo suficiente para que no se vea apagado, pero no tan fuerte como cuando habla.
+            // Oscila entre 1.5 y 4.5.
             const idlePulse = 3.0 + Math.sin(time * 4.0) * 1.5; 
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = idlePulse);
+            emissiveMaterials.forEach(mat => {
+                mat.emissiveIntensity = idlePulse;
+            });
         }
     }
 
@@ -350,7 +356,7 @@ function monitorearVolumen() {
 }
 
 // ==========================================
-// SECCIÓN 3.5: LÓGICA DE PLAYBACK FOTÓNICO
+// SECCIÓN 3.5: LÓGICA DE PLAYBACK FOTÓNICO (BYPASS CORS)
 // ==========================================
 
 async function enviarTextoAlCerebro(textoUsuario) {
@@ -364,27 +370,39 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (!respuestaChat.ok) throw new Error("Error IA");
         const data = await respuestaChat.json();
         
-        avatarHablando = true; 
-        const reproductor = new Audio();
-        reproductor.src = `/api/speak?text=${encodeURIComponent(data.text)}`;
-        reproductor.crossOrigin = "anonymous"; 
+        console.log("⬇️ Descargando audio para inyección directa...");
         
-        const fuenteAudio = audioContext.createMediaElementSource(reproductor);
-        fuenteAudio.connect(reproductorAnalyser);
+        // EL TRUCO MAESTRO: Descargamos el audio como datos puros para engañar la seguridad del navegador
+        const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        
+        // Decodificamos el audio dentro del contexto
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        
+        // Creamos la fuente de audio interna
+        const source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        
+        // CONECTAR AL ANALIZADOR Y A LOS PARLANTES
+        source.connect(reproductorAnalyser);
         reproductorAnalyser.connect(audioContext.destination);
         
-        console.log("🔥 Destellos reactivos de voz activados (Multiplicador x80).");
+        avatarHablando = true; 
+        console.log("🔥 Destellos reactivos de voz activados (Lectura de Picos).");
         
-        await reproductor.play();
+        // Reproducir
+        source.start(0);
         
-        reproductor.onended = () => {
+        source.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
+            emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0); // Fuerza la vuelta a idle
             console.log("⏹️ Avatar en silencio (Vuelve a respiración).");
         };
     } catch (error) {
         console.error("Error comunicando:", error);
         avatarHablando = false;
+        emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0);
     }
 }
 
