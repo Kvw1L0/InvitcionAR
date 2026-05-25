@@ -74,8 +74,9 @@ function initThreeJS() {
     fillLight.position.set(-5, 3, -5);
     scene.add(fillLight);
 
-    // BLOOM POTENCIADO (Glow Sangrante al máximo) 
-    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 4.0, 1.5, 0.8);
+    // SOLUCIÓN 2: BLOOM EXTREMO CALIBRADO
+    // Fuerza: 4.0 | Radio: 1.5 | Threshold: 0.2 (Muy bajo para que estalle la luz)
+    bloomPass = new THREE.UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 4.0, 1.5, 0.2);
     
     composer = new THREE.EffectComposer(renderer);
     composer.addPass(new THREE.RenderPass(scene, camera));
@@ -122,12 +123,12 @@ function loadModel() {
                     const matName = mat.name.toLowerCase();
                     const meshName = child.name.toLowerCase();
 
-                    // OJOS Y BOCA -> FUEGO ROJO PURO (Sin reflejos)
+                    // OJOS Y BOCA -> FUEGO ROJO PURO
                     if (matName.includes('ojo') || meshName.includes('ojo') || matName.includes('boca') || meshName.includes('boca')) {
-                        mat.emissive.setHex(0xff0000); // Emisión roja máxima
-                        mat.color.setHex(0x000000);    // Base NEGRA pura para contraste de lava
-                        mat.metalness = 0.0;           // Cero metal
-                        mat.roughness = 1.0;           // Cero brillo plástico
+                        mat.emissive = new THREE.Color(0xff0000); // Emisión roja máxima
+                        mat.color = new THREE.Color(0x000000);    // Base NEGRA
+                        mat.metalness = 0.0;           
+                        mat.roughness = 1.0;           
                         mat.emissiveIntensity = 3.0;   // Intensidad idle base
                         
                         emissiveMaterials.push(mat); 
@@ -135,11 +136,11 @@ function loadModel() {
                     } 
                     // CASCO -> ACERO HÚMEDO BRILLANTE
                     else {
-                        mat.emissive.setHex(0x000000); 
+                        mat.emissive = new THREE.Color(0x000000); // Cero emisión
                         mat.emissiveIntensity = 0;
-                        mat.metalness = 1.0;  // Acero puro
-                        mat.roughness = 0.15; // Húmedo/espejo pulido
-                        mat.color.setHex(0xaaaaaa); // Gris plata
+                        mat.metalness = 1.0;  
+                        mat.roughness = 0.15; 
+                        mat.color = new THREE.Color(0xaaaaaa); 
                         console.log(`🛡️ Acero Húmedo configurado en: ${child.name}`);
                     }
                 });
@@ -176,15 +177,14 @@ function animate() {
     }
 
     // ==========================================
-    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ, LECTURA DE PICOS)
+    // CORAZÓN FOTÓNICO (LIP-SYNC 100% LUZ)
     // ==========================================
     if (emissiveMaterials.length > 0) {
         
-        // ESTADO 1: HABLANDO (Destellos súper agresivos leyendo Picos)
+        // ESTADO 1: HABLANDO
         if (avatarHablando && reproductorAnalyser) {
             reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
             
-            // LA MAGIA: Buscamos la frecuencia más fuerte (Pico)
             let maxVolume = 0;
             for (let i = 0; i < dataArrayPlayback.length; i++) {
                 if (dataArrayPlayback[i] > maxVolume) {
@@ -192,20 +192,24 @@ function animate() {
                 }
             }
             
-            // MULTIPLICADOR AGRESIVO: Destella hasta 150.0 de intensidad lumínica
+            // DIAGNÓSTICO: Descomenta la siguiente línea si quieres ver el volumen en consola
+            // console.log("Volumen detectado:", maxVolume); 
+            
+            // Intensidad extrema: Base 3.0 + hasta 150 extra dependiendo del volumen
             const dynamicIntensity = 3.0 + (maxVolume / 255.0) * 150.0;
             
             emissiveMaterials.forEach(mat => {
                 mat.emissiveIntensity = dynamicIntensity;
+                mat.needsUpdate = true; // SOLUCIÓN 3: Forzar actualización del material
             });
         } 
         
         // ESTADO 2: SILENCIO (Respiración de lava)
         else {
-            // Oscila entre 3.0 y 6.0
-            const idlePulse = 4.5 + Math.sin(time * 3.0) * 1.5; 
+            const idlePulse = 3.0 + Math.sin(time * 4.0) * 1.5; 
             emissiveMaterials.forEach(mat => {
                 mat.emissiveIntensity = idlePulse;
+                mat.needsUpdate = true; // Forzar actualización del material
             });
         }
     }
@@ -216,7 +220,7 @@ function animate() {
 }
 
 // ==========================================
-// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (Mantenido intacto)
+// SECCIÓN 3: MOTOR DE AUDIO Y WEBSOCKETS (INTACTO)
 // ==========================================
 
 function reiniciarSesionTotem() {
@@ -372,7 +376,12 @@ async function enviarTextoAlCerebro(textoUsuario) {
         
         console.log("⬇️ Descargando audio para inyección directa...");
         
-        // EL TRUCO MAESTRO: Descargamos el audio como datos puros para engañar la seguridad del navegador
+        // SOLUCIÓN 1: ASEGURAR QUE EL CONTEXTO ESTÉ DESPIERTO ANTES DE PROCESAR
+        if (audioContext && audioContext.state === 'suspended') {
+            await audioContext.resume();
+            console.log("🔊 AudioContext despertado forzosamente.");
+        }
+        
         const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
         const arrayBuffer = await audioResponse.arrayBuffer();
         
@@ -396,13 +405,19 @@ async function enviarTextoAlCerebro(textoUsuario) {
         source.onended = () => {
             avatarHablando = false; 
             resetearTemporizador();
-            emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0); // Fuerza la vuelta a idle
+            emissiveMaterials.forEach(mat => {
+                mat.emissiveIntensity = 3.0;
+                mat.needsUpdate = true;
+            });
             console.log("⏹️ Avatar en silencio (Vuelve a respiración).");
         };
     } catch (error) {
         console.error("Error comunicando:", error);
         avatarHablando = false;
-        emissiveMaterials.forEach(mat => mat.emissiveIntensity = 3.0);
+        emissiveMaterials.forEach(mat => {
+            mat.emissiveIntensity = 3.0;
+            mat.needsUpdate = true;
+        });
     }
 }
 
