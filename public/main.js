@@ -2,6 +2,10 @@
 // SECCIÓN 0: VARIABLES GLOBALES
 // ==========================================
 
+const sfxPensando = new Audio('https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Frobot%20pensando.MP3?alt=media&token=c2aad6d4-579f-4801-8b87-07010baa129b');
+sfxPensando.loop = true;  // Para que se repita si la IA tarda un poco más
+sfxPensando.volume = 0.4; // Volumen al 40% para que sea sutil y no aturda
+
 function generarNuevoId() {
     return 'totem_user_' + Math.random().toString(36).substr(2, 9);
 }
@@ -104,8 +108,8 @@ function loadModel() {
 
     loader.load(MODEL_PATH, (gltf) => {
         model = gltf.scene;
-        model.scale.set(1, 1, 1); 
-        model.position.set(0, 0, 0); 
+        model.scale.set(1.3, 1.3, 1.3); 
+        model.position.set(0, -0.8 , 0); 
         emissiveMaterials = [];
 
         model.traverse((child) => {
@@ -279,6 +283,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
     try {
         // --- ESTADO: PENSANDO (Activa la animación de latencia) ---
         iaPensando = true;
+        sfxPensando.play();
         console.log("🧠 SECCIÓN 6: Pensando respuesta para:", textoUsuario);
         
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
@@ -302,7 +307,9 @@ async function enviarTextoAlCerebro(textoUsuario) {
         reproductorAnalyser.connect(audioContext.destination);
         
         // --- ESTADO: HABLANDO ---
-        iaPensando = false; 
+        iaPensando = false;
+        sfxPensando.pause();
+        sfxPensando.currentTime = 0; 
         avatarHablando = true; 
         console.log("🔥 Lip-Sync Fotónico activado (Boca estática).");
         
@@ -317,6 +324,8 @@ async function enviarTextoAlCerebro(textoUsuario) {
         console.error("Error comunicando:", error);
         iaPensando = false;
         avatarHablando = false;
+        sfxPensando.pause(); // <--- POR SI OCURRE UN ERROR, QUE NO QUEDE SONANDO
+        sfxPensando.currentTime = 0;
     }
 }
 
@@ -382,7 +391,7 @@ function animate() {
         // Movimiento de cabeza y flotación
         model.rotation.x = currentRotationX;
         model.rotation.y = currentRotationY;
-        model.position.y = Math.sin(time) * 0.1; 
+        model.position.y = -0.8+Math.sin(time) * 0.1; 
 
         // Modificación geométrica Eliminada para la boca. Se mantendrá estática.
     }
