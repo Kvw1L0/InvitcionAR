@@ -38,7 +38,7 @@ export default async function handler(req, res) {
 
         const datosEvento = await obtenerDatosEvento();
         
-        let pautaSistema = `Eres el co-animador e inteligencia central de Jungle. Tu estilo es enérgico, cercano, sumamente profesional pero lúdico. 
+        let pautaSistema = `Eres la co-animadora e inteligencia llamada Sandy. Tu estilo es enérgico, cercano, sumamente profesional pero lúdico. 
         Tus respuestas deben ser ultra-breves (máximo 2 frases cortas). Si el usuario te dice su nombre, recuérdalo y úsalo en las siguientes respuestas.
         INFORMACIÓN CRUCIAL: Fecha: ${fechaChile} | Hora: ${horaChile}`;
 
