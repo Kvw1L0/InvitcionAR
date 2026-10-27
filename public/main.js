@@ -66,12 +66,17 @@ let audioContext, analyser, reproductorAnalyser, microphone, globalStream, media
 let isUserSpeaking = false;
 let currentMicVolume = 0;
 let silenceTimer = null;
+let fallbackSpeechTimer = null;
 let isCalibrating = false;
+let monitoreandoActivo = false; // Evita loops duplicados de requestAnimationFrame
+let ignorarMicHasta = 0;        // Ventana de enfriamiento post-habla para evitar eco de los parlantes
+let ultimoTextoEnviado = "";
+let ultimoEnvioTimestamp = 0;
 let baseNoiseFloor = 0;
-let dynamicVolumeThreshold = 15;
-const SIGNAL_TO_NOISE_MARGIN = 10;
-const MAX_VOLUME_THRESHOLD = 42; // Tope máximo para que un ruido fuerte en calibración no deje sordo al tótem
-const SILENCE_DURATION = 650;
+let dynamicVolumeThreshold = 12;
+const SIGNAL_TO_NOISE_MARGIN = 7;
+const MAX_VOLUME_THRESHOLD = 35; // Tope máximo para que un ruido fuerte en calibración no deje sordo al tótem
+const SILENCE_DURATION = 750;
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 let transcripcionInterina = "";
@@ -403,22 +408,17 @@ async function conectarDeepgramYGrabar() {
         if (!data || !data.key) {
             throw new Error("Token de Deepgram vacío o inválido");
         }
-        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=500&mimetype=audio/webm';
+        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=550&utterance_end_ms=1000&mimetype=audio/webm';
 
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         deepgramSocket.onopen = () => {
             console.log("✅ Deepgram en vivo.");
             mediaRecorder = new MediaRecorder(globalStream, { mimeType: 'audio/webm' });
             mediaRecorder.ondataavailable = (event) => {
-                // MEJORA: No enviamos paquetes de audio a Deepgram mientras el avatar piensa o habla
-                // Ahorra costos de API y evita que el micrófono transcriba la propia voz del avatar
-                if (
-                    event.data.size > 0 &&
-                    deepgramSocket.readyState === 1 &&
-                    !avatarHablando &&
-                    !iaPensando &&
-                    !isCalibrating
-                ) {
+                // NOTA CRÍTICA: MediaRecorder en formato audio/webm necesita enviar un flujo continuo
+                // a Deepgram porque solo el primer chunk contiene el encabezado EBML/WebM.
+                // Si se omiten chunks intermedios, el decodificador de Deepgram se corrompe.
+                if (event.data.size > 0 && deepgramSocket.readyState === 1) {
                     deepgramSocket.send(event.data);
                 }
             };
@@ -432,10 +432,33 @@ async function conectarDeepgramYGrabar() {
 
         deepgramSocket.onmessage = (message) => {
             const respuesta = JSON.parse(message.data);
+
+            // Ignorar cualquier transcripción si el avatar está hablando, pensando, calibrando
+            // o dentro de la ventana de enfriamiento post-respuesta (evita eco de parlantes)
+            if (avatarHablando || iaPensando || isCalibrating || Date.now() < ignorarMicHasta) {
+                transcripcionAcumulada = "";
+                transcripcionInterina = "";
+                return;
+            }
+
+            if (respuesta.type === 'UtteranceEnd') {
+                const pendiente = `${transcripcionAcumulada} ${transcripcionInterina}`.trim();
+                if (pendiente !== "" && !isUserSpeaking) {
+                    dispararEnvioAlCerebro();
+                }
+                return;
+            }
+
             if (!respuesta.channel || !respuesta.channel.alternatives[0]) return;
 
             const transcript = respuesta.channel.alternatives[0].transcript.trim();
-            if (transcript === "" || avatarHablando || iaPensando) return;
+            if (transcript === "") return;
+
+            // Si Deepgram detecta palabras reales del usuario (incluso si habló suave),
+            // reiniciamos timers de inactividad y programamos envío seguro
+            clearTimeout(temporizadorInactividad);
+            programarAttractLoop();
+            if (fallbackSpeechTimer) clearTimeout(fallbackSpeechTimer);
 
             if (respuesta.is_final) {
                 transcripcionAcumulada += transcript + " ";
@@ -448,9 +471,23 @@ async function conectarDeepgramYGrabar() {
             const textoVisible = `${transcripcionAcumulada}${transcripcionInterina}`.trim();
             mostrarSubtituloUsuario(textoVisible);
 
-            // Si Deepgram detecta speech_final y ya teníamos silencio, aceleramos respuesta
-            if (respuesta.speech_final && !isUserSpeaking && textoVisible !== "") {
-                dispararEnvioAlCerebro();
+            // Si Deepgram marca speech_final, disparamos tras un breve margen o de inmediato si ya hay silencio
+            if (respuesta.speech_final && textoVisible !== "") {
+                if (!isUserSpeaking) {
+                    dispararEnvioAlCerebro();
+                } else {
+                    fallbackSpeechTimer = setTimeout(() => {
+                        isUserSpeaking = false;
+                        dispararEnvioAlCerebro();
+                    }, 450);
+                }
+            } else if (textoVisible !== "") {
+                // Respaldo por si el usuario habló más bajo que el umbral VAD pero Deepgram sí lo escuchó
+                fallbackSpeechTimer = setTimeout(() => {
+                    if (!isUserSpeaking && !avatarHablando && !iaPensando) {
+                        dispararEnvioAlCerebro();
+                    }
+                }, 1100);
             }
         };
 
@@ -465,13 +502,38 @@ async function conectarDeepgramYGrabar() {
 }
 
 function dispararEnvioAlCerebro() {
-    if (enviandoACerebro || iaPensando || avatarHablando) return;
-    const textoCompleto = `${transcripcionAcumulada} ${transcripcionInterina}`.trim();
-    if (textoCompleto === "") return;
+    if (fallbackSpeechTimer) {
+        clearTimeout(fallbackSpeechTimer);
+        fallbackSpeechTimer = null;
+    }
+    if (silenceTimer) {
+        clearTimeout(silenceTimer);
+        silenceTimer = null;
+    }
 
-    enviandoACerebro = true;
+    if (enviandoACerebro || iaPensando || avatarHablando || Date.now() < ignorarMicHasta) {
+        transcripcionAcumulada = "";
+        transcripcionInterina = "";
+        return;
+    }
+
+    const textoCompleto = `${transcripcionAcumulada} ${transcripcionInterina}`.trim();
     transcripcionAcumulada = "";
     transcripcionInterina = "";
+
+    // Ignorar ruidos sueltos de 1 sola letra
+    if (textoCompleto.length < 2) return;
+
+    // Evitar que se reenvíe exactamente la misma frase en menos de 4 segundos por paquetes tardíos
+    if (textoCompleto.toLowerCase() === ultimoTextoEnviado.toLowerCase() && (Date.now() - ultimoEnvioTimestamp) < 4000) {
+        console.log("🛡️ Evitado envío duplicado:", textoCompleto);
+        return;
+    }
+
+    ultimoTextoEnviado = textoCompleto;
+    ultimoEnvioTimestamp = Date.now();
+    enviandoACerebro = true;
+
     enviarTextoAlCerebro(textoCompleto).finally(() => {
         enviandoACerebro = false;
     });
@@ -493,24 +555,32 @@ function calibrarRuidoAmbiente() {
 
     setTimeout(() => {
         clearInterval(calibracionInterval);
-        // Ordenamos muestras y descartamos el 20% más alto por si hubo un ruido puntual durante la calibración
+        // Ordenamos muestras y descartamos el 25% más alto por si hubo ruido puntual durante la calibración
         samples.sort((a, b) => a - b);
-        const validSamples = samples.slice(0, Math.max(1, Math.floor(samples.length * 0.8)));
+        const validSamples = samples.slice(0, Math.max(1, Math.floor(samples.length * 0.75)));
         const avg = validSamples.reduce((acc, v) => acc + v, 0) / validSamples.length;
 
         baseNoiseFloor = avg;
-        dynamicVolumeThreshold = Math.min(MAX_VOLUME_THRESHOLD, Math.max(12, baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN));
+        dynamicVolumeThreshold = Math.min(MAX_VOLUME_THRESHOLD, Math.max(9, baseNoiseFloor + SIGNAL_TO_NOISE_MARGIN));
         isCalibrating = false;
         console.log(`✅ Umbral inteligente seteado en: ${dynamicVolumeThreshold.toFixed(2)}`);
 
         actualizarHUD('idle', 'Acércate y háblame', '#10b981', 5);
         programarAttractLoop();
-        monitorearVolumen();
-    }, 2600);
+        if (!monitoreandoActivo) {
+            monitoreandoActivo = true;
+            monitorearVolumen();
+        }
+    }, 2400);
 }
 
 function monitorearVolumen() {
-    if (isCalibrating || avatarHablando || iaPensando) {
+    if (isCalibrating || avatarHablando || iaPensando || Date.now() < ignorarMicHasta) {
+        isUserSpeaking = false;
+        if (silenceTimer) {
+            clearTimeout(silenceTimer);
+            silenceTimer = null;
+        }
         requestAnimationFrame(monitorearVolumen);
         return;
     }
@@ -544,10 +614,10 @@ function monitorearVolumen() {
                 isUserSpeaking = false;
                 silenceTimer = null;
                 setTimeout(() => {
-                    if (!isUserSpeaking) {
+                    if (!isUserSpeaking && !avatarHablando && !iaPensando) {
                         dispararEnvioAlCerebro();
                     }
-                }, 350);
+                }, 400);
             }, SILENCE_DURATION);
         }
     }
@@ -561,8 +631,17 @@ function monitorearVolumen() {
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
         iaPensando = true;
+        isUserSpeaking = false;
         enAttractLoop = false;
+        transcripcionAcumulada = "";
+        transcripcionInterina = "";
         if (attractBanner) attractBanner.classList.remove('visible');
+
+        // Silenciamos la pista del micrófono mientras el avatar piensa y habla
+        // para que el flujo WebM siga vivo con silencio puro y NUNCA capte la voz del propio avatar
+        if (globalStream) {
+            globalStream.getAudioTracks().forEach(track => { track.enabled = false; });
+        }
 
         mostrarSubtituloUsuario(textoUsuario);
         actualizarHUD('thinking', 'Pensando respuesta...', '#f59e0b', 65);
@@ -603,7 +682,20 @@ async function enviarTextoAlCerebro(textoUsuario) {
         source.start(0);
 
         source.onended = () => {
+            // Limpiamos cualquier residuo y damos 900ms de enfriamiento antes de reabrir el micrófono
+            // para evitar que la reverberación del salón vuelva a disparar la misma pregunta
+            transcripcionAcumulada = "";
+            transcripcionInterina = "";
+            isUserSpeaking = false;
+            ignorarMicHasta = Date.now() + 900;
             avatarHablando = false;
+
+            setTimeout(() => {
+                if (globalStream && !iaPensando && !avatarHablando) {
+                    globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
+                }
+            }, 600);
+
             actualizarHUD('idle', 'Acércate y háblame', '#10b981', 5);
             temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
             programarAttractLoop();
@@ -618,6 +710,10 @@ async function enviarTextoAlCerebro(textoUsuario) {
         console.error("Error comunicando:", error);
         iaPensando = false;
         avatarHablando = false;
+        ignorarMicHasta = Date.now() + 500;
+        if (globalStream) {
+            globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
+        }
         sfxPensando.pause();
         sfxPensando.currentTime = 0;
         actualizarHUD('idle', 'Acércate y háblame', '#10b981', 0);
