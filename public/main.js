@@ -396,7 +396,13 @@ async function conectarDeepgramYGrabar() {
     try {
         console.log("⚡ SECCIÓN 4: Conectando a Deepgram...");
         const res = await fetch('/api/deepgram-token');
+        if (!res.ok) {
+            throw new Error(`Error HTTP ${res.status} obteniendo token de Deepgram`);
+        }
         const data = await res.json();
+        if (!data || !data.key) {
+            throw new Error("Token de Deepgram vacío o inválido");
+        }
         const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=500&mimetype=audio/webm';
 
         deepgramSocket = new WebSocket(url, ['token', data.key]);
