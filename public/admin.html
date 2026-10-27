@@ -3,35 +3,365 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jungle CMS - Panel de Producción</title>
+    <title>Jungle CMS - Panel de Administración BTL</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #111827; color: white; padding: 20px; }
-        .container { max-width: 500px; margin: auto; background: #1f2937; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        h1 { color: #10b981; margin-top: 0; }
-        label { display: block; margin: 15px 0 5px; font-weight: bold; color: #9ca3af; }
-        input[type="file"], textarea { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #374151; background: #111827; color: white; box-sizing: border-box; }
-        button { width: 100%; padding: 15px; margin-top: 20px; border-radius: 8px; border: none; background: #10b981; color: #111827; font-weight: bold; font-size: 16px; cursor: pointer; transition: 0.2s; }
-        button:hover { background: #059669; color: white; }
-        button:disabled { background: #374151; color: #9ca3af; cursor: not-allowed; }
-        #estado { text-align: center; margin-top: 15px; font-weight: bold; }
+        :root {
+            --bg-dark: #0f172a;
+            --card-bg: #1e293b;
+            --border-color: #334155;
+            --accent: #10b981;
+            --accent-hover: #059669;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            margin: 0;
+            padding: 30px 16px;
+        }
+        .wrapper {
+            max-width: 900px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 24px;
+        }
+        @media (min-width: 768px) {
+            .wrapper {
+                grid-template-columns: 1fr 1fr;
+            }
+            .full-width {
+                grid-column: 1 / -1;
+            }
+        }
+        .header-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--card-bg);
+            padding: 20px 28px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+        }
+        .header-bar h1 {
+            margin: 0;
+            font-size: 24px;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .header-bar a {
+            color: var(--text-main);
+            text-decoration: none;
+            background: #334155;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+        .header-bar a:hover {
+            background: var(--accent);
+            color: #0f172a;
+        }
+        .card {
+            background: var(--card-bg);
+            padding: 26px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            display: flex;
+            flex-direction: column;
+        }
+        .card h2 {
+            margin-top: 0;
+            font-size: 18px;
+            color: var(--accent);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            margin: 12px 0 6px;
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+        input[type="text"], input[type="file"], textarea {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-dark);
+            color: var(--text-main);
+            font-size: 14px;
+            font-family: inherit;
+        }
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            margin-bottom: 12px;
+        }
+        .toggle-info {
+            padding-right: 12px;
+        }
+        .toggle-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-main);
+            display: block;
+        }
+        .toggle-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            display: block;
+        }
+        /* Switch estilizado */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 26px;
+            flex-shrink: 0;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #475569;
+            transition: .3s;
+            border-radius: 26px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: var(--accent);
+        }
+        input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            margin-top: 18px;
+            border-radius: 8px;
+            border: none;
+            background: var(--accent);
+            color: #0f172a;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        button:hover {
+            background: var(--accent-hover);
+            color: white;
+        }
+        button:disabled {
+            background: #334155;
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+        .status-msg {
+            text-align: center;
+            margin-top: 12px;
+            font-weight: 600;
+            font-size: 14px;
+            min-height: 20px;
+        }
+        .pauta-preview {
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 14px;
+            font-size: 13px;
+            color: #cbd5e1;
+            white-space: pre-wrap;
+            max-height: 240px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Jungle CMS 🦁</h1>
-        <p>Sube la foto de la pauta del cliente y la IA actualizará el cerebro del avatar en segundos.</p>
+    <div class="wrapper">
+        <div class="header-bar full-width">
+            <h1>🦁 Jungle CMS — Panel de Administración</h1>
+            <a href="/" target="_blank">Abrir Tótem BTL ↗</a>
+        </div>
 
-        <label>📸 Foto de la pauta (o captura de pantalla):</label>
-        <input type="file" id="archivoFoto" accept="image/*">
-        
-        <label>📝 O pega el texto directamente:</label>
-        <textarea id="textoPauta" rows="5" placeholder="Pegar pauta aquí si no tienes foto..."></textarea>
-        
-        <button id="btnProcesar" onclick="enviarPauta()">Actualizar Cerebro del Avatar</button>
-        <div id="estado"></div>
+        <!-- COLUMNA 1: CONFIGURACIÓN DE EXPERIENCIA Y SUBTÍTULOS -->
+        <div class="card">
+            <h2>🎛️ Experiencia en Pantalla y Tótem</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin-top: 0; margin-bottom: 16px;">
+                Controla en tiempo real los elementos visuales del tótem (como los subtítulos para entornos ruidosos).
+            </p>
+
+            <div class="toggle-row">
+                <div class="toggle-info">
+                    <span class="toggle-title">💬 Subtítulos en Tiempo Real (CC)</span>
+                    <span class="toggle-desc">Muestra en pantalla lo que el usuario dice y la respuesta de la IA.</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="chkSubtitulos">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="toggle-row">
+                <div class="toggle-info">
+                    <span class="toggle-title">🎙️ HUD Indicador de Estado y Voz</span>
+                    <span class="toggle-desc">Muestra el estado ("Calibrando", "Escuchando", "Pensando") y barra de voz.</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="chkHudEstado" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="toggle-row">
+                <div class="toggle-info">
+                    <span class="toggle-title">✨ Modo Attract Loop (Inactividad)</span>
+                    <span class="toggle-desc">El avatar busca personas con la mirada e invita a acercarse cuando está libre.</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="chkAttractLoop" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="toggle-row">
+                <div class="toggle-info">
+                    <span class="toggle-title">🎨 Diferenciación Cromática de Estados</span>
+                    <span class="toggle-desc">Cambia el color del núcleo según estado (Esmeralda, Cian, Ámbar, Fuego).</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="chkColoresDinamicos" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <label for="inputNombreEvento">🏷️ Nombre del Evento:</label>
+            <input type="text" id="inputNombreEvento" placeholder="Ej: Lanzamiento Producto X">
+
+            <label for="inputInstrucciones">🎯 Instrucciones / Personalidad Extra:</label>
+            <textarea id="inputInstrucciones" rows="3" placeholder="Ej: Invita a los asistentes a pasar al stand 4 por un regalo..."></textarea>
+
+            <button id="btnGuardarConfig" onclick="guardarConfiguracion()">Guardar Configuración de Experiencia</button>
+            <div id="estadoConfig" class="status-msg"></div>
+        </div>
+
+        <!-- COLUMNA 2: ACTUALIZACIÓN DE PAUTA CON IA (VISIÓN / TEXTO) -->
+        <div class="card">
+            <h2>🧠 Cerebro y Pauta del Evento (IA)</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin-top: 0;">
+                Sube una foto de la agenda o pega el texto para que GPT-4o estructure la pauta automáticamente.
+            </p>
+
+            <label>📸 Foto de la pauta (o captura de pantalla):</label>
+            <input type="file" id="archivoFoto" accept="image/*">
+            
+            <label>📝 O pega el texto directamente:</label>
+            <textarea id="textoPauta" rows="4" placeholder="Pegar pauta aquí si no tienes foto..."></textarea>
+            
+            <button id="btnProcesar" onclick="enviarPauta()">Procesar y Actualizar Pauta con IA</button>
+            <div id="estado" class="status-msg"></div>
+
+            <label style="margin-top: 18px;">📄 Pauta Activa en Base de Datos:</label>
+            <div id="pautaActualPreview" class="pauta-preview">Cargando pauta actual...</div>
+        </div>
     </div>
 
     <script>
+        async function cargarConfiguracionActual() {
+            try {
+                const res = await fetch('/api/config');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                document.getElementById('chkSubtitulos').checked = !!data.mostrarSubtitulos;
+                document.getElementById('chkHudEstado').checked = data.mostrarHudEstado !== false;
+                document.getElementById('chkAttractLoop').checked = data.modoAttractLoop !== false;
+                document.getElementById('chkColoresDinamicos').checked = data.coloresDinamicos !== false;
+                document.getElementById('inputNombreEvento').value = data.nombreEvento || '';
+                document.getElementById('inputInstrucciones').value = data.instrucciones || '';
+                document.getElementById('pautaActualPreview').innerText = data.pautaCompleta || 'Sin pauta cargada aún.';
+            } catch (e) {
+                console.error("Error cargando configuración:", e);
+                document.getElementById('pautaActualPreview').innerText = 'No se pudo conectar con /api/config.';
+            }
+        }
+
+        async function guardarConfiguracion() {
+            const btn = document.getElementById('btnGuardarConfig');
+            const estadoConfig = document.getElementById('estadoConfig');
+            btn.disabled = true;
+            estadoConfig.style.color = '#fbbf24';
+            estadoConfig.innerText = 'Guardando ajustes...';
+
+            const payload = {
+                mostrarSubtitulos: document.getElementById('chkSubtitulos').checked,
+                mostrarHudEstado: document.getElementById('chkHudEstado').checked,
+                modoAttractLoop: document.getElementById('chkAttractLoop').checked,
+                coloresDinamicos: document.getElementById('chkColoresDinamicos').checked,
+                nombreEvento: document.getElementById('inputNombreEvento').value.trim(),
+                instrucciones: document.getElementById('inputInstrucciones').value.trim()
+            };
+
+            try {
+                // Guardamos también en localStorage por si el tótem corre en el mismo navegador
+                localStorage.setItem('jungle_totem_config', JSON.stringify(payload));
+
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    estadoConfig.style.color = '#10b981';
+                    estadoConfig.innerText = '¡Configuración sincronizada con el Tótem! ✅';
+                } else {
+                    estadoConfig.style.color = '#ef4444';
+                    estadoConfig.innerText = 'Error: ' + (data.error || 'No se pudo guardar');
+                }
+            } catch (error) {
+                estadoConfig.style.color = '#10b981';
+                estadoConfig.innerText = 'Guardado localmente en este navegador ✅';
+            }
+            btn.disabled = false;
+        }
+
         async function enviarPauta() {
             const fileInput = document.getElementById('archivoFoto');
             const textoInput = document.getElementById('textoPauta').value;
@@ -40,11 +370,10 @@
             
             btn.disabled = true;
             estado.style.color = '#fbbf24';
-            estado.innerText = "Pensando y leyendo la pauta (toma unos segundos)...";
+            estado.innerText = "Analizando y estructurando la pauta con IA...";
 
             let payload = {};
 
-            // Si subieron foto, la convertimos a código (Base64)
             if (fileInput.files.length > 0) {
                 const reader = new FileReader();
                 reader.onloadend = async () => {
@@ -56,7 +385,8 @@
                 payload.textInput = textoInput;
                 realizarPeticion(payload, btn, estado);
             } else {
-                estado.innerText = "Por favor sube una foto o escribe algo.";
+                estado.style.color = '#ef4444';
+                estado.innerText = "Por favor sube una foto o escribe la pauta.";
                 btn.disabled = false;
             }
         }
@@ -75,6 +405,9 @@
                     estado.style.color = '#10b981';
                     estado.innerText = "¡Mente del Avatar Actualizada con Éxito! ✅";
                     document.getElementById('archivoFoto').value = '';
+                    if (data.markdown) {
+                        document.getElementById('pautaActualPreview').innerText = data.markdown;
+                    }
                 } else {
                     estado.style.color = '#ef4444';
                     estado.innerText = "Error: " + data.error;
@@ -85,6 +418,8 @@
             }
             btn.disabled = false;
         }
+
+        document.addEventListener('DOMContentLoaded', cargarConfiguracionActual);
     </script>
 </body>
 </html>
