@@ -7,27 +7,42 @@ export default async function handler(req, res) {
     if (!text) return res.status(400).json({ error: 'Falta el texto' });
 
     try {
-        // optimize_streaming_latency=3 obliga a ElevenLabs a responder en milisegundos
-        const url = `https://api.elevenlabs.io/v1/text-to-speech/6Gr4AVmTax1pMJO0lHRK/stream?optimize_streaming_latency=3`;
+        // optimize_streaming_latency=4 (máxima velocidad de ElevenLabs) + formato mp3_22050_32 (ligero y ultra-rápido)
+        const url = `https://api.elevenlabs.io/v1/text-to-speech/6Gr4AVmTax1pMJO0lHRK/stream?optimize_streaming_latency=4&output_format=mp3_22050_32`;
         
         const response = await axios.post(
             url,
-            { text: text, model_id: "eleven_turbo_v2_5" },
+            { 
+                text: text, 
+                model_id: "eleven_flash_v2_5" // Modelo Flash v2.5 (~75ms de latencia de inferencia)
+            },
             { 
                 headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY },
-                responseType: 'stream' // ¡LA MAGIA DEL STREAMING AQUÍ!
+                responseType: 'stream'
             }
         );
 
-        // Preparamos a Vercel para enviar los datos en pedacitos (chunks)
         res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Transfer-Encoding', 'chunked');
         
-        // Conectamos la tubería: ElevenLabs -> Vercel -> Parlantes del Tótem
         response.data.pipe(res);
         
     } catch (error) {
-        console.error("Error en el Streaming de Voz:", error.message);
-        res.status(500).json({ error: error.message });
+        // Fallback automático a eleven_turbo_v2_5 si por alguna razón flash no estuviera habilitado
+        try {
+            const fallbackUrl = `https://api.elevenlabs.io/v1/text-to-speech/6Gr4AVmTax1pMJO0lHRK/stream?optimize_streaming_latency=4`;
+            const fallbackRes = await axios.post(
+                fallbackUrl,
+                { text: text, model_id: "eleven_turbo_v2_5" },
+                { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY }, responseType: 'stream' }
+            );
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Transfer-Encoding', 'chunked');
+            fallbackRes.data.pipe(res);
+        } catch (err2) {
+            console.error("Error en el Streaming de Voz:", err2.message);
+            res.status(500).json({ error: err2.message });
+        }
     }
 }

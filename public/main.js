@@ -72,11 +72,14 @@ let monitoreandoActivo = false; // Evita loops duplicados de requestAnimationFra
 let ignorarMicHasta = 0;        // Ventana de enfriamiento post-habla para evitar eco de los parlantes
 let ultimoTextoEnviado = "";
 let ultimoEnvioTimestamp = 0;
+let ultimoSalvavidasId = 0;
+let activeAudioElement = null;
+let mediaElementSource = null;
 let baseNoiseFloor = 0;
 let dynamicVolumeThreshold = 12;
 const SIGNAL_TO_NOISE_MARGIN = 7;
 const MAX_VOLUME_THRESHOLD = 35; // Tope máximo para que un ruido fuerte en calibración no deje sordo al tótem
-const SILENCE_DURATION = 750;
+const SILENCE_DURATION = 500;    // Reducido a 500ms para respuesta más ágil
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 let transcripcionInterina = "";
@@ -94,25 +97,34 @@ const subtitleAiEl = document.getElementById('subtitle-ai');
 const attractBanner = document.getElementById('attract-banner');
 
 // ==========================================
-// SECCIÓN 0.5: SINCRONIZACIÓN CON PANEL DE ADMINISTRADOR
+// SECCIÓN 0.5: SINCRONIZACIÓN CON PANEL DE ADMINISTRADOR Y SALVAVIDAS
 // ==========================================
 
-async function sincronizarConfigAdmin() {
+async function sincronizarConfigAdmin(esCargaInicial = false) {
     try {
-        // Primero revisamos si hay cambios locales inmediatos en el mismo navegador
         const localRaw = localStorage.getItem('jungle_totem_config');
         if (localRaw) {
             const parsed = JSON.parse(localRaw);
             totemConfig = { ...totemConfig, ...parsed };
         }
-        // Luego consultamos Firestore vía /api/config
         const res = await fetch('/api/config');
         if (res.ok) {
             const remoteConfig = await res.json();
             totemConfig = { ...totemConfig, ...remoteConfig };
+
+            if (remoteConfig.salvavidasTrigger && remoteConfig.salvavidasTrigger.id) {
+                const trig = remoteConfig.salvavidasTrigger;
+                if (esCargaInicial) {
+                    // En el arranque inicial registramos el ID para no disparar un salvavidas viejo
+                    ultimoSalvavidasId = trig.id;
+                } else if (trig.id > ultimoSalvavidasId && (Date.now() - trig.id) < 15000) {
+                    ultimoSalvavidasId = trig.id;
+                    hablarFraseDirecta(trig.text);
+                }
+            }
         }
     } catch (err) {
-        // Fallback silencioso a configuración actual
+        // Fallback silencioso
     }
     aplicarConfigVisual();
 }
@@ -130,7 +142,7 @@ function aplicarConfigVisual() {
     }
 }
 
-// Escuchar cambios en vivo si el admin está abierto en otra pestaña del mismo equipo
+// Escuchar cambios en vivo y botón Salvavidas instantáneo (0ms) en el mismo equipo
 window.addEventListener('storage', (e) => {
     if (e.key === 'jungle_totem_config' && e.newValue) {
         try {
@@ -138,7 +150,29 @@ window.addEventListener('storage', (e) => {
             aplicarConfigVisual();
         } catch (_) {}
     }
+    if (e.key === 'jungle_salvavidas_trigger' && e.newValue) {
+        try {
+            const trig = JSON.parse(e.newValue);
+            if (trig && trig.id > ultimoSalvavidasId) {
+                ultimoSalvavidasId = trig.id;
+                hablarFraseDirecta(trig.text);
+            }
+        } catch (_) {}
+    }
 });
+
+try {
+    const totemChannel = new BroadcastChannel('jungle_totem_channel');
+    totemChannel.onmessage = (event) => {
+        if (event.data && event.data.type === 'SALVAVIDAS_SPEAK' && event.data.payload) {
+            const trig = event.data.payload;
+            if (trig.id > ultimoSalvavidasId) {
+                ultimoSalvavidasId = trig.id;
+                hablarFraseDirecta(trig.text);
+            }
+        }
+    };
+} catch (_) {}
 
 function actualizarHUD(estado, texto, colorHex, porcentajeBarra = 0) {
     if (!hudElement) return;
@@ -408,11 +442,11 @@ async function conectarDeepgramYGrabar() {
         if (!data || !data.key) {
             throw new Error("Token de Deepgram vacío o inválido");
         }
-        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=550&utterance_end_ms=1000&mimetype=audio/webm';
+        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=320&utterance_end_ms=1000&mimetype=audio/webm';
 
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         deepgramSocket.onopen = () => {
-            console.log("✅ Deepgram en vivo.");
+            console.log("✅ Deepgram en vivo (Baja Latencia 120ms chunks).");
             mediaRecorder = new MediaRecorder(globalStream, { mimeType: 'audio/webm' });
             mediaRecorder.ondataavailable = (event) => {
                 // NOTA CRÍTICA: MediaRecorder en formato audio/webm necesita enviar un flujo continuo
@@ -422,7 +456,7 @@ async function conectarDeepgramYGrabar() {
                     deepgramSocket.send(event.data);
                 }
             };
-            mediaRecorder.start(250);
+            mediaRecorder.start(120); // Chunks de 120ms (mitad de latencia de captura)
             keepAliveInterval = setInterval(() => {
                 if (deepgramSocket.readyState === 1) {
                     deepgramSocket.send(JSON.stringify({ type: "KeepAlive" }));
@@ -471,7 +505,7 @@ async function conectarDeepgramYGrabar() {
             const textoVisible = `${transcripcionAcumulada}${transcripcionInterina}`.trim();
             mostrarSubtituloUsuario(textoVisible);
 
-            // Si Deepgram marca speech_final, disparamos tras un breve margen o de inmediato si ya hay silencio
+            // Si Deepgram marca speech_final (320ms de silencio detectados por IA), disparamos rápido
             if (respuesta.speech_final && textoVisible !== "") {
                 if (!isUserSpeaking) {
                     dispararEnvioAlCerebro();
@@ -479,7 +513,7 @@ async function conectarDeepgramYGrabar() {
                     fallbackSpeechTimer = setTimeout(() => {
                         isUserSpeaking = false;
                         dispararEnvioAlCerebro();
-                    }, 450);
+                    }, 220);
                 }
             } else if (textoVisible !== "") {
                 // Respaldo por si el usuario habló más bajo que el umbral VAD pero Deepgram sí lo escuchó
@@ -487,7 +521,7 @@ async function conectarDeepgramYGrabar() {
                     if (!isUserSpeaking && !avatarHablando && !iaPensando) {
                         dispararEnvioAlCerebro();
                     }
-                }, 1100);
+                }, 750);
             }
         };
 
@@ -617,7 +651,7 @@ function monitorearVolumen() {
                     if (!isUserSpeaking && !avatarHablando && !iaPensando) {
                         dispararEnvioAlCerebro();
                     }
-                }, 400);
+                }, 150);
             }, SILENCE_DURATION);
         }
     }
@@ -625,8 +659,103 @@ function monitorearVolumen() {
 }
 
 // ==========================================
-// SECCIÓN 6: ESTADOS IA Y PLAYBACK (CON SUBTÍTULOS Y STREAMING RÁPIDO)
+// SECCIÓN 6: ESTADOS IA, STREAMING EN TIEMPO REAL Y SALVAVIDAS
 // ==========================================
+
+// Reproduce el stream de /api/speak al instante usando un elemento <audio> conectado al AnalyserNode
+// (Empieza a sonar apenas llegan los primeros ~200ms de ElevenLabs sin esperar a descargar todo el archivo)
+async function reproducirVozStreaming(textoAI) {
+    if (!audioContext) return;
+    if (audioContext.state === 'suspended') await audioContext.resume();
+
+    // Inicializamos el elemento de audio en streaming una sola vez y lo conectamos al analizador 3D
+    if (!activeAudioElement) {
+        activeAudioElement = new Audio();
+        activeAudioElement.crossOrigin = "anonymous";
+        activeAudioElement.preload = "auto";
+        mediaElementSource = audioContext.createMediaElementSource(activeAudioElement);
+        mediaElementSource.connect(reproductorAnalyser);
+        reproductorAnalyser.connect(audioContext.destination);
+    }
+
+    return new Promise((resolve, reject) => {
+        activeAudioElement.pause();
+        activeAudioElement.src = `/api/speak?text=${encodeURIComponent(textoAI)}&_t=${Date.now()}`;
+
+        activeAudioElement.onplaying = () => {
+            iaPensando = false;
+            sfxPensando.pause();
+            sfxPensando.currentTime = 0;
+            avatarHablando = true;
+
+            mostrarSubtituloIA(textoAI);
+            actualizarHUD('speaking', 'Sandy hablando...', '#ff1e00', 80);
+            console.log("🔥 Lip-Sync Fotónico en Streaming Progresivo activado.");
+        };
+
+        activeAudioElement.onended = () => {
+            transcripcionAcumulada = "";
+            transcripcionInterina = "";
+            isUserSpeaking = false;
+            ignorarMicHasta = Date.now() + 850;
+            avatarHablando = false;
+
+            setTimeout(() => {
+                if (globalStream && !iaPensando && !avatarHablando) {
+                    globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
+                }
+            }, 500);
+
+            actualizarHUD('idle', 'Acércate y háblame', '#10b981', 5);
+            temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
+            programarAttractLoop();
+            setTimeout(() => {
+                if (!isUserSpeaking && !avatarHablando) {
+                    mostrarSubtituloUsuario("");
+                }
+            }, 2500);
+            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
+            resolve();
+        };
+
+        activeAudioElement.onerror = (err) => {
+            reject(err);
+        };
+
+        activeAudioElement.play().catch(reject);
+    });
+}
+
+// Función para el botón "Salvavidas" del Panel de Administración (habla directo sin pasar por OpenAI)
+async function hablarFraseDirecta(textoSalvavidas) {
+    if (!audioContext || !textoSalvavidas) return;
+    try {
+        console.log("🛟 SALVAVIDAS ACTIVADO:", textoSalvavidas);
+        if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+        if (fallbackSpeechTimer) { clearTimeout(fallbackSpeechTimer); fallbackSpeechTimer = null; }
+
+        iaPensando = false;
+        isUserSpeaking = false;
+        enAttractLoop = false;
+        transcripcionAcumulada = "";
+        transcripcionInterina = "";
+        if (attractBanner) attractBanner.classList.remove('visible');
+
+        if (globalStream) {
+            globalStream.getAudioTracks().forEach(track => { track.enabled = false; });
+        }
+
+        mostrarSubtituloUsuario("");
+        await reproducirVozStreaming(textoSalvavidas);
+    } catch (error) {
+        console.error("Error ejecutando Salvavidas:", error);
+        iaPensando = false;
+        avatarHablando = false;
+        if (globalStream) {
+            globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
+        }
+    }
+}
 
 async function enviarTextoAlCerebro(textoUsuario) {
     try {
@@ -638,7 +767,6 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (attractBanner) attractBanner.classList.remove('visible');
 
         // Silenciamos la pista del micrófono mientras el avatar piensa y habla
-        // para que el flujo WebM siga vivo con silencio puro y NUNCA capte la voz del propio avatar
         if (globalStream) {
             globalStream.getAudioTracks().forEach(track => { track.enabled = false; });
         }
@@ -657,55 +785,8 @@ async function enviarTextoAlCerebro(textoUsuario) {
         if (!data.text) throw new Error("Respuesta vacía del servidor");
         console.log("🤖 IA responde:", data.text);
 
-        if (audioContext.state === 'suspended') await audioContext.resume();
+        await reproducirVozStreaming(data.text);
 
-        const audioResponse = await fetch(`/api/speak?text=${encodeURIComponent(data.text)}`);
-        const arrayBuffer = await audioResponse.arrayBuffer();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-
-        const source = audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-
-        source.connect(reproductorAnalyser);
-        reproductorAnalyser.connect(audioContext.destination);
-
-        // --- ESTADO: HABLANDO ---
-        iaPensando = false;
-        sfxPensando.pause();
-        sfxPensando.currentTime = 0;
-        avatarHablando = true;
-
-        mostrarSubtituloIA(data.text);
-        actualizarHUD('speaking', 'Sandy hablando...', '#ff1e00', 80);
-        console.log("🔥 Lip-Sync Fotónico Diferenciado activado.");
-
-        source.start(0);
-
-        source.onended = () => {
-            // Limpiamos cualquier residuo y damos 900ms de enfriamiento antes de reabrir el micrófono
-            // para evitar que la reverberación del salón vuelva a disparar la misma pregunta
-            transcripcionAcumulada = "";
-            transcripcionInterina = "";
-            isUserSpeaking = false;
-            ignorarMicHasta = Date.now() + 900;
-            avatarHablando = false;
-
-            setTimeout(() => {
-                if (globalStream && !iaPensando && !avatarHablando) {
-                    globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
-                }
-            }, 600);
-
-            actualizarHUD('idle', 'Acércate y háblame', '#10b981', 5);
-            temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
-            programarAttractLoop();
-            setTimeout(() => {
-                if (!isUserSpeaking && !avatarHablando) {
-                    mostrarSubtituloUsuario("");
-                }
-            }, 3000);
-            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
-        };
     } catch (error) {
         console.error("Error comunicando:", error);
         iaPensando = false;
@@ -867,9 +948,9 @@ function animate() {
 // ==========================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    sincronizarConfigAdmin();
-    // Sincronizar periódicamente cada 15 segundos por si se cambian ajustes desde /admin.html en otro dispositivo
-    setInterval(sincronizarConfigAdmin, 15000);
+    sincronizarConfigAdmin(true);
+    // Sincronizar periódicamente cada 2.5 segundos por si se dispara el Salvavidas o se cambian ajustes desde otro dispositivo
+    setInterval(() => sincronizarConfigAdmin(false), 2500);
 
     const btnIniciar = document.getElementById('btnIniciar');
     if (btnIniciar) {

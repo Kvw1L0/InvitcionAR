@@ -9,6 +9,7 @@ const TARGET_DOC_ID = 'OCzI3LihKgPtbDdj1HpU';
 
 export default async function handler(req, res) {
     const docRef = db.collection('eventos').doc(TARGET_DOC_ID);
+    res.setHeader('Cache-Control', 'no-store');
 
     if (req.method === 'GET') {
         try {
@@ -22,7 +23,8 @@ export default async function handler(req, res) {
                 nombreEvento: data.nombreEvento || 'Activación Jungle',
                 descripcion: data.descripcion || '',
                 instrucciones: data.instrucciones || '',
-                pautaCompleta: data.pautaCompleta || ''
+                pautaCompleta: data.pautaCompleta || '',
+                salvavidasTrigger: data.salvavidasTrigger || null
             });
         } catch (error) {
             console.error("Error leyendo config:", error);
@@ -39,7 +41,8 @@ export default async function handler(req, res) {
                 coloresDinamicos,
                 nombreEvento,
                 descripcion,
-                instrucciones
+                instrucciones,
+                salvavidasText
             } = req.body;
 
             const updatePayload = {};
@@ -50,6 +53,14 @@ export default async function handler(req, res) {
             if (typeof nombreEvento === 'string') updatePayload.nombreEvento = nombreEvento;
             if (typeof descripcion === 'string') updatePayload.descripcion = descripcion;
             if (typeof instrucciones === 'string') updatePayload.instrucciones = instrucciones;
+
+            // Si el administrador disparó un botón "Salvavidas"
+            if (typeof salvavidasText === 'string' && salvavidasText.trim() !== '') {
+                updatePayload.salvavidasTrigger = {
+                    id: Date.now(),
+                    text: salvavidasText.trim()
+                };
+            }
 
             await docRef.set(updatePayload, { merge: true });
             return res.status(200).json({ success: true, config: updatePayload });

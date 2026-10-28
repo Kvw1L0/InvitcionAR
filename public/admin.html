@@ -211,6 +211,62 @@
             overflow-y: auto;
             margin-top: 10px;
         }
+        /* Estilos para el módulo Salvavidas */
+        .lifesaver-card {
+            border: 2px solid #f59e0b;
+            background: linear-gradient(145deg, #1e293b 0%, #172033 100%);
+        }
+        .lifesaver-card h2 {
+            color: #fbbf24;
+            border-bottom-color: rgba(245, 158, 11, 0.3);
+        }
+        .lifesaver-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+        @media (min-width: 640px) {
+            .lifesaver-grid {
+                grid-template-columns: 1fr 1fr 1fr;
+            }
+        }
+        .btn-lifesaver {
+            margin-top: 0;
+            background: #f59e0b;
+            color: #0f172a;
+            font-size: 14px;
+            padding: 14px 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.25);
+        }
+        .btn-lifesaver:hover {
+            background: #fbbf24;
+            color: #0f172a;
+            transform: translateY(-2px);
+        }
+        .custom-lifesaver-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .custom-lifesaver-row input {
+            flex: 1;
+        }
+        .custom-lifesaver-row button {
+            width: auto;
+            margin-top: 0;
+            padding: 0 22px;
+            background: #38bdf8;
+        }
+        .custom-lifesaver-row button:hover {
+            background: #0284c7;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -218,6 +274,37 @@
         <div class="header-bar full-width">
             <h1>🦁 Jungle CMS — Panel de Administración</h1>
             <a href="/" target="_blank">Abrir Tótem BTL ↗</a>
+        </div>
+
+        <!-- MÓDULO SALVAVIDAS EN VIVO (INTERVENCIÓN INMEDIATA DEL CO-ANIMADOR) -->
+        <div class="card lifesaver-card full-width">
+            <h2>🛟 Salvavidas en Vivo — Intervención Inmediata</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin-top: 0; margin-bottom: 14px;">
+                Si Sandy no escuchó o no entendió al animador/usuario por ruido en el salón, presiona cualquiera de estos botones para que hable <b>al instante</b> sin pasar por el LLM.
+            </p>
+
+            <div class="lifesaver-grid">
+                <button class="btn-lifesaver" onclick="dispararSalvavidas('¡Uy! Con la energía del salón no alcancé a escucharte bien. ¿Me puedes repetir la pregunta?')">
+                    <span style="font-size: 20px;">🙉</span>
+                    <span>"¿Me puedes repetir la pregunta?"</span>
+                </button>
+
+                <button class="btn-lifesaver" onclick="dispararSalvavidas('Perdón, se cortó un poquito el audio por acá. ¿Me lo dices de nuevo un poco más cerca del micrófono?')">
+                    <span style="font-size: 20px;">🎙️</span>
+                    <span>"Acércate un poquito más al micrófono"</span>
+                </button>
+
+                <button class="btn-lifesaver" onclick="dispararSalvavidas('¡Qué buena onda se siente aquí en el evento! Cuéntame de nuevo, que me distraje mirando a todos.')">
+                    <span style="font-size: 20px;">✨</span>
+                    <span>Salir jugando con humor + repetir</span>
+                </button>
+            </div>
+
+            <div class="custom-lifesaver-row">
+                <input type="text" id="inputSalvavidasCustom" placeholder="O escribe aquí cualquier frase que quieras que Sandy diga ahora mismo...">
+                <button onclick="dispararSalvavidasCustom()">Hablar Ahora 🔊</button>
+            </div>
+            <div id="estadoSalvavidas" class="status-msg"></div>
         </div>
 
         <!-- COLUMNA 1: CONFIGURACIÓN DE EXPERIENCIA Y SUBTÍTULOS -->
@@ -417,6 +504,47 @@
                 estado.innerText = "Error de conexión.";
             }
             btn.disabled = false;
+        }
+
+        async function dispararSalvavidas(texto) {
+            const estadoEl = document.getElementById('estadoSalvavidas');
+            estadoEl.style.color = '#fbbf24';
+            estadoEl.innerText = `Disparando en el Tótem: "${texto}"...`;
+
+            const triggerObj = { id: Date.now(), text: texto };
+
+            // 1. Disparo instantáneo (0ms) por BroadcastChannel y localStorage si el Tótem está en el mismo PC
+            try {
+                const bc = new BroadcastChannel('jungle_totem_channel');
+                bc.postMessage({ type: 'SALVAVIDAS_SPEAK', payload: triggerObj });
+                bc.close();
+            } catch (_) {}
+            try {
+                localStorage.setItem('jungle_salvavidas_trigger', JSON.stringify(triggerObj));
+            } catch (_) {}
+
+            // 2. Disparo remoto por Firestore (/api/config) por si el Admin se usa desde un celular o tablet
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ salvavidasText: texto })
+                });
+                estadoEl.style.color = '#10b981';
+                estadoEl.innerText = `¡Salvavidas enviado al Tótem! 🛟`;
+            } catch (err) {
+                estadoEl.style.color = '#10b981';
+                estadoEl.innerText = `¡Salvavidas enviado localmente! 🛟`;
+            }
+            setTimeout(() => { estadoEl.innerText = ''; }, 4000);
+        }
+
+        function dispararSalvavidasCustom() {
+            const input = document.getElementById('inputSalvavidasCustom');
+            const texto = input.value.trim();
+            if (!texto) return;
+            dispararSalvavidas(texto);
+            input.value = '';
         }
 
         document.addEventListener('DOMContentLoaded', cargarConfiguracionActual);
