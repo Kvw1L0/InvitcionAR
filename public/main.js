@@ -79,7 +79,8 @@ let baseNoiseFloor = 0;
 let dynamicVolumeThreshold = 12;
 const SIGNAL_TO_NOISE_MARGIN = 7;
 const MAX_VOLUME_THRESHOLD = 35; // Tope máximo para que un ruido fuerte en calibración no deje sordo al tótem
-const SILENCE_DURATION = 500;    // Reducido a 500ms para respuesta más ágil
+const SILENCE_DURATION = 300;    // Reducido a 300ms para respuesta ultra-ágil
+let historialConversacionLocal = [];
 let deepgramSocket, keepAliveInterval;
 let transcripcionAcumulada = "";
 let transcripcionInterina = "";
@@ -101,6 +102,7 @@ const attractBanner = document.getElementById('attract-banner');
 // ==========================================
 
 async function sincronizarConfigAdmin(esCargaInicial = false) {
+    if (!esCargaInicial && iaPensando) return;
     try {
         const localRaw = localStorage.getItem('jungle_totem_config');
         if (localRaw) {
@@ -348,10 +350,13 @@ function loadModel() {
             scene.add(model);
             console.log(`✅ Modelo cargado (${eyeMaterials.length} ojos, ${mouthMaterials.length} boca).`);
 
-            const overlay = document.getElementById('overlay');
-            if (overlay) {
-                overlay.style.opacity = '0';
-                setTimeout(() => { overlay.style.display = 'none'; }, 600);
+                        if (loadingBox) loadingBox.style.display = 'none';
+            if (window.__experienciaIniciada) {
+                const overlay = document.getElementById('overlay');
+                if (overlay) {
+                    overlay.style.opacity = '0';
+                    setTimeout(() => { overlay.style.display = 'none'; }, 400);
+                }
             }
             animate();
         },
@@ -442,7 +447,7 @@ async function conectarDeepgramYGrabar() {
         if (!data || !data.key) {
             throw new Error("Token de Deepgram vacío o inválido");
         }
-        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=320&utterance_end_ms=1000&mimetype=audio/webm';
+        const url = 'wss://api.deepgram.com/v1/listen?language=es&model=nova-2&smart_format=true&interim_results=true&endpointing=240&utterance_end_ms=1000&mimetype=audio/webm';
 
         deepgramSocket = new WebSocket(url, ['token', data.key]);
         deepgramSocket.onopen = () => {
@@ -505,15 +510,16 @@ async function conectarDeepgramYGrabar() {
             const textoVisible = `${transcripcionAcumulada}${transcripcionInterina}`.trim();
             mostrarSubtituloUsuario(textoVisible);
 
-            // Si Deepgram marca speech_final (320ms de silencio detectados por IA), disparamos rápido
+            // Si Deepgram marca speech_final (240ms de silencio detectados por IA), disparamos de inmediato
             if (respuesta.speech_final && textoVisible !== "") {
-                if (!isUserSpeaking) {
+                if (!isUserSpeaking || currentMicVolume <= dynamicVolumeThreshold * 1.15) {
+                    isUserSpeaking = false;
                     dispararEnvioAlCerebro();
                 } else {
                     fallbackSpeechTimer = setTimeout(() => {
                         isUserSpeaking = false;
                         dispararEnvioAlCerebro();
-                    }, 220);
+                    }, 90);
                 }
             } else if (textoVisible !== "") {
                 // Respaldo por si el usuario habló más bajo que el umbral VAD pero Deepgram sí lo escuchó
@@ -521,7 +527,7 @@ async function conectarDeepgramYGrabar() {
                     if (!isUserSpeaking && !avatarHablando && !iaPensando) {
                         dispararEnvioAlCerebro();
                     }
-                }, 750);
+                }, 520);
             }
         };
 
@@ -651,7 +657,7 @@ function monitorearVolumen() {
                     if (!isUserSpeaking && !avatarHablando && !iaPensando) {
                         dispararEnvioAlCerebro();
                     }
-                }, 150);
+                }, 30);
             }, SILENCE_DURATION);
         }
     }
@@ -664,12 +670,8 @@ function monitorearVolumen() {
 
 // Reproduce el stream de /api/speak al instante usando un elemento <audio> conectado al AnalyserNode
 // (Empieza a sonar apenas llegan los primeros ~200ms de ElevenLabs sin esperar a descargar todo el archivo)
-async function reproducirVozStreaming(textoAI) {
-    if (!audioContext) return;
-    if (audioContext.state === 'suspended') await audioContext.resume();
-
-    // Inicializamos el elemento de audio en streaming una sola vez y lo conectamos al analizador 3D
-    if (!activeAudioElement) {
+function asegurarElementoAudio() {
+    if (!activeAudioElement && audioContext) {
         activeAudioElement = new Audio();
         activeAudioElement.crossOrigin = "anonymous";
         activeAudioElement.preload = "auto";
@@ -677,10 +679,41 @@ async function reproducirVozStreaming(textoAI) {
         mediaElementSource.connect(reproductorAnalyser);
         reproductorAnalyser.connect(audioContext.destination);
     }
+}
+
+function finalizarTurnoHabla() {
+    transcripcionAcumulada = "";
+    transcripcionInterina = "";
+    isUserSpeaking = false;
+    ignorarMicHasta = Date.now() + 550;
+    avatarHablando = false;
+
+    setTimeout(() => {
+        if (globalStream && !iaPensando && !avatarHablando) {
+            globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
+        }
+    }, 320);
+
+    actualizarHUD('idle', 'Acércate y háblame', '#10b981', 5);
+    temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
+    programarAttractLoop();
+    setTimeout(() => {
+        if (!isUserSpeaking && !avatarHablando) {
+            mostrarSubtituloUsuario("");
+        }
+    }, 2500);
+    console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
+}
+
+// Reproduce un segmento de audio (URL o Blob URL) y resuelve al terminar
+async function reproducirSegmentoAudio(srcUrl, subtituloTexto) {
+    if (!audioContext) return;
+    if (audioContext.state === 'suspended') await audioContext.resume();
+    asegurarElementoAudio();
 
     return new Promise((resolve, reject) => {
         activeAudioElement.pause();
-        activeAudioElement.src = `/api/speak?text=${encodeURIComponent(textoAI)}&_t=${Date.now()}`;
+        activeAudioElement.src = srcUrl;
 
         activeAudioElement.onplaying = () => {
             iaPensando = false;
@@ -688,42 +721,20 @@ async function reproducirVozStreaming(textoAI) {
             sfxPensando.currentTime = 0;
             avatarHablando = true;
 
-            mostrarSubtituloIA(textoAI);
+            if (subtituloTexto) mostrarSubtituloIA(subtituloTexto);
             actualizarHUD('speaking', 'Sandy hablando...', '#ff1e00', 80);
-            console.log("🔥 Lip-Sync Fotónico en Streaming Progresivo activado.");
         };
 
-        activeAudioElement.onended = () => {
-            transcripcionAcumulada = "";
-            transcripcionInterina = "";
-            isUserSpeaking = false;
-            ignorarMicHasta = Date.now() + 850;
-            avatarHablando = false;
-
-            setTimeout(() => {
-                if (globalStream && !iaPensando && !avatarHablando) {
-                    globalStream.getAudioTracks().forEach(track => { track.enabled = true; });
-                }
-            }, 500);
-
-            actualizarHUD('idle', 'Acércate y háblame', '#10b981', 5);
-            temporizadorInactividad = setTimeout(reiniciarSesionTotem, TIEMPO_ESPERA_MS);
-            programarAttractLoop();
-            setTimeout(() => {
-                if (!isUserSpeaking && !avatarHablando) {
-                    mostrarSubtituloUsuario("");
-                }
-            }, 2500);
-            console.log("⏹️ Avatar en silencio. Escuchando ambiente...");
-            resolve();
-        };
-
-        activeAudioElement.onerror = (err) => {
-            reject(err);
-        };
-
+        activeAudioElement.onended = () => resolve();
+        activeAudioElement.onerror = (err) => reject(err);
         activeAudioElement.play().catch(reject);
     });
+}
+
+async function reproducirVozStreaming(textoAI) {
+    const url = `/api/speak?text=${encodeURIComponent(textoAI)}&_t=${Date.now()}`;
+    await reproducirSegmentoAudio(url, textoAI);
+    finalizarTurnoHabla();
 }
 
 // Función para el botón "Salvavidas" del Panel de Administración (habla directo sin pasar por OpenAI)
@@ -771,20 +782,112 @@ async function enviarTextoAlCerebro(textoUsuario) {
             globalStream.getAudioTracks().forEach(track => { track.enabled = false; });
         }
 
-        mostrarSubtituloUsuario(textoUsuario);
+        const cleanInput = textoUsuario.trim();
+        mostrarSubtituloUsuario(cleanInput);
         actualizarHUD('thinking', 'Pensando respuesta...', '#f59e0b', 65);
         sfxPensando.play().catch(() => {});
-        console.log("🧠 SECCIÓN 6: Pensando respuesta para:", textoUsuario);
+        console.log("🧠 SECCIÓN 6: Pensando respuesta ultra-rápida para:", cleanInput);
 
         const respuestaChat = await fetch(`/api/chat?userId=${userId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: textoUsuario.trim() })
+            body: JSON.stringify({
+                text: cleanInput,
+                history: historialConversacionLocal.slice(-6),
+                stream: true
+            })
         });
+
+        if (!respuestaChat.ok) throw new Error(`HTTP ${respuestaChat.status}`);
+
+        // Si el servidor responde en modo streaming NDJSON (Sentence-Chunking)
+        if (respuestaChat.body && (respuestaChat.headers.get('content-type') || '').includes('application/x-ndjson')) {
+            const reader = respuestaChat.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let sentenceQueue = [];
+            let fullAiResponse = "";
+            let playbackPromise = null;
+
+            // Cola asíncrona que reproduce la frase 1 de inmediato y pre-descarga la frase 2 en paralelo
+            const activeQueueItems = [];
+            let processingQueue = false;
+
+            const processQueue = async () => {
+                if (processingQueue) return;
+                processingQueue = true;
+                while (activeQueueItems.length > 0) {
+                    const item = activeQueueItems.shift();
+                    try {
+                        const src = item.blobPromise ? await item.blobPromise : item.url;
+                        await reproducirSegmentoAudio(src, fullAiResponse || item.text);
+                        if (item.isBlob && src) URL.revokeObjectURL(src);
+                    } catch (e) {
+                        console.warn("Error reproduciendo segmento:", e);
+                    }
+                }
+                processingQueue = false;
+            };
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || "";
+
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    let evt;
+                    try { evt = JSON.parse(line); } catch { continue; }
+
+                    if (evt.type === 'sentence' && evt.text) {
+                        fullAiResponse = fullAiResponse ? `${fullAiResponse} ${evt.text}` : evt.text;
+                        if (avatarHablando) mostrarSubtituloIA(fullAiResponse);
+
+                        const ttsUrl = `/api/speak?text=${encodeURIComponent(evt.text)}&_t=${Date.now()}`;
+                        if (evt.index === 0 && activeQueueItems.length === 0 && !processingQueue) {
+                            // Primera frase: reproducir en vivo por stream directo sin esperar descarga completa
+                            activeQueueItems.push({ text: evt.text, url: ttsUrl, isBlob: false });
+                            playbackPromise = processQueue();
+                        } else {
+                            // Segunda frase: pre-descargar el audio en paralelo mientras suena la primera frase (0ms de pausa entre frases)
+                            const blobPromise = fetch(ttsUrl)
+                                .then(r => r.ok ? r.blob() : Promise.reject(new Error('TTS fetch failed')))
+                                .then(b => URL.createObjectURL(b))
+                                .catch(() => ttsUrl);
+                            activeQueueItems.push({ text: evt.text, blobPromise, isBlob: true });
+                            if (!processingQueue) playbackPromise = processQueue();
+                        }
+                    } else if (evt.type === 'done' && evt.text) {
+                        fullAiResponse = evt.text;
+                        if (avatarHablando) mostrarSubtituloIA(fullAiResponse);
+                    }
+                }
+            }
+
+            if (playbackPromise) await playbackPromise;
+            while (processingQueue || activeQueueItems.length > 0) {
+                await new Promise(r => setTimeout(r, 40));
+            }
+
+            if (fullAiResponse) {
+                historialConversacionLocal.push({ role: 'user', content: cleanInput });
+                historialConversacionLocal.push({ role: 'assistant', content: fullAiResponse });
+                if (historialConversacionLocal.length > 10) {
+                    historialConversacionLocal = historialConversacionLocal.slice(-10);
+                }
+            }
+
+            finalizarTurnoHabla();
+            return;
+        }
+
+        // Fallback clásico JSON
         const data = await respuestaChat.json();
         if (!data.text) throw new Error("Respuesta vacía del servidor");
-        console.log("🤖 IA responde:", data.text);
-
+        historialConversacionLocal.push({ role: 'user', content: cleanInput });
+        historialConversacionLocal.push({ role: 'assistant', content: data.text });
         await reproducirVozStreaming(data.text);
 
     } catch (error) {
@@ -803,6 +906,7 @@ async function enviarTextoAlCerebro(textoUsuario) {
 
 function reiniciarSesionTotem() {
     userId = generarNuevoId();
+    historialConversacionLocal = [];
     mostrarSubtituloUsuario("");
     mostrarSubtituloIA("");
     console.log("🔄 Sesión reiniciada. Tótem libre.");
@@ -952,12 +1056,22 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sincronizar periódicamente cada 2.5 segundos por si se dispara el Salvavidas o se cambian ajustes desde otro dispositivo
     setInterval(() => sincronizarConfigAdmin(false), 2500);
 
+        // Pre-cargar Three.js y el modelo 3D en segundo plano apenas abre la página para arranque instantáneo
+    initThreeJS();
+    loadModel();
+
     const btnIniciar = document.getElementById('btnIniciar');
     if (btnIniciar) {
         btnIniciar.addEventListener('click', () => {
+            window.__experienciaIniciada = true;
             btnIniciar.style.display = 'none';
-            initThreeJS();
-            loadModel();
+            if (model) {
+                const overlay = document.getElementById('overlay');
+                if (overlay) {
+                    overlay.style.opacity = '0';
+                    setTimeout(() => { overlay.style.display = 'none'; }, 400);
+                }
+            }
             iniciarSistemaDeAudio();
         });
     }
