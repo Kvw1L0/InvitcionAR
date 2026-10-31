@@ -6,6 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
 const sfxPensando = new Audio('https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Frobot%20pensando.MP3?alt=media&token=c2aad6d4-579f-4801-8b87-07010baa129b');
 sfxPensando.loop = true;
@@ -26,15 +27,49 @@ let totemConfig = {
     mostrarSubtitulos: false,
     mostrarHudEstado: true,
     modoAttractLoop: true,
-    coloresDinamicos: true
+    coloresDinamicos: true,
+    modoControlCabeza: 'auto', // 'auto' | 'lookat' | 'mirror'
+    mostrarVisorPuntos: true
 };
 
-// --- Variables 3D ---
+// --- Variables 3D y Rigs ---
 let scene, camera, renderer, model, composer, bloomPass;
 let clock = new THREE.Clock();
 let emissiveMaterials = [];
 let eyeMaterials = [];
 let mouthMaterials = [];
+let morphTargetMeshes = [];
+
+// Interpoladores (LERP) para movimientos fluidos (X: Pitch, Y: Yaw, Z: Roll)
+let currentRotationX = 0;
+let targetRotationX = 0;
+let currentRotationY = 0;
+let targetRotationY = 0;
+let currentRotationZ = 0;
+let targetRotationZ = 0;
+const LERP_ROTATION = 0.08;
+const LERP_LIGHT = 0.18;
+const LERP_COLOR = 0.08;
+
+// --- Variables de Rastreo Facial por Webcam (MediaPipe Face Landmarker) ---
+let faceLandmarker = null;
+let webcamStream = null;
+let webcamRunning = false;
+let initializingFaceTracker = false;
+let lastVideoTime = -1;
+let faceDetected = false;
+let faceTrackState = {
+    yaw: 0,         // Giro izquierda/derecha
+    pitch: 0,       // Inclinación arriba/abajo
+    roll: 0,        // Ladeo lateral del cuello
+    centerX: 0,     // Posición X del rostro en cámara (-1 a 1)
+    centerY: 0,     // Posición Y del rostro en cámara (-1 a 1)
+    jawOpen: 0,     // Apertura de boca (0 a 1)
+    mouthSmile: 0,  // Sonrisa (0 a 1)
+    eyeBlinkL: 0,   // Parpadeo ojo izquierdo (0 a 1)
+    eyeBlinkR: 0,   // Parpadeo ojo derecho (0 a 1)
+    blendshapesMap: {}
+};
 
 // --- Variables de Animación, Parpadeo y Estados ---
 let iaPensando = false;
@@ -49,15 +84,6 @@ const COLOR_LISTENING = new THREE.Color(0x00e5ff); // Cian reactivo al escuchar 
 const COLOR_THINKING = new THREE.Color(0xf59e0b);  // Ámbar/Naranja de cómputo
 const COLOR_SPEAKING = new THREE.Color(0xff1e00);  // Rojo/Lava energética al hablar
 const COLOR_CLASSIC_RED = new THREE.Color(0xff0000);
-
-// Interpoladores (LERP) para movimientos fluidos
-let currentRotationX = 0;
-let targetRotationX = 0;
-let currentRotationY = 0;
-let targetRotationY = 0;
-const LERP_ROTATION = 0.06;
-const LERP_LIGHT = 0.18;
-const LERP_COLOR = 0.08;
 
 const MODEL_PATH = 'https://firebasestorage.googleapis.com/v0/b/avatar-ia-84a80.firebasestorage.app/o/Moldels%2Favatar-ia.glb?alt=media&token=e6e64cf6-f39c-487d-9344-26ac71956d0c';
 
@@ -141,6 +167,189 @@ function aplicarConfigVisual() {
     if (!totemConfig.modoAttractLoop && attractBanner) {
         attractBanner.classList.remove('visible');
         enAttractLoop = false;
+    }
+    actualizarEstadoFaceTrackerUI();
+}
+
+// ==========================================
+// SECCIÓN 0.8: SISTEMA DE RASTREO FACIAL POR WEBCAM (478 PUNTOS DE ANCLAJE 3D)
+// ==========================================
+
+const faceTrackerHud = document.getElementById('face-tracker-hud');
+const trackerTogglePill = document.getElementById('tracker-toggle-pill');
+const trackerPillLabel = document.getElementById('tracker-pill-label');
+const webcamVideo = document.getElementById('webcam-video');
+const landmarksCanvas = document.getElementById('landmarks-canvas');
+const landmarksCtx = landmarksCanvas ? landmarksCanvas.getContext('2d') : null;
+
+function actualizarEstadoFaceTrackerUI() {
+    const modo = totemConfig.modoControlCabeza || 'auto';
+    const labels = { auto: 'Auto IA', lookat: 'Mirada Activa', mirror: 'Espejo en Vivo' };
+    if (trackerPillLabel) trackerPillLabel.innerText = labels[modo] || 'Auto IA';
+
+    document.querySelectorAll('.tracker-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === modo);
+    });
+
+    if (modo !== 'auto') {
+        if (!webcamRunning && !initializingFaceTracker) {
+            iniciarRastreoFacialWebcam();
+        }
+        if (faceTrackerHud) {
+            faceTrackerHud.style.display = totemConfig.mostrarVisorPuntos ? 'flex' : 'none';
+        }
+        if (trackerTogglePill) {
+            trackerTogglePill.style.display = totemConfig.mostrarVisorPuntos ? 'none' : 'flex';
+        }
+    } else {
+        if (faceTrackerHud) faceTrackerHud.style.display = 'none';
+        if (trackerTogglePill && renderer) trackerTogglePill.style.display = 'flex';
+    }
+}
+
+async function iniciarRastreoFacialWebcam() {
+    if (webcamRunning || initializingFaceTracker) return;
+    initializingFaceTracker = true;
+    const statusTitle = document.getElementById('tracker-status-title');
+    if (statusTitle) statusTitle.innerText = '⏳ CARGANDO IA FACIAL...';
+
+    try {
+        if (!faceLandmarker) {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+            );
+            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                    delegate: "GPU"
+                },
+                outputFaceBlendshapes: true,
+                outputFacialTransformationMatrixes: true,
+                runningMode: "VIDEO",
+                numFaces: 1
+            });
+        }
+
+        if (!webcamStream) {
+            webcamStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: "user" },
+                audio: false
+            });
+            if (webcamVideo) {
+                webcamVideo.srcObject = webcamStream;
+                await webcamVideo.play().catch(() => {});
+            }
+        }
+
+        webcamRunning = true;
+        if (statusTitle) statusTitle.innerText = '🕸️ ANCLAJE FACIAL 3D';
+        console.log("✅ Rastreo Facial por Webcam activo (478 puntos de anclaje).");
+    } catch (error) {
+        console.error("Error iniciando webcam para rastreo facial:", error);
+        if (statusTitle) statusTitle.innerText = '⚠️ SIN CÁMARA';
+    } finally {
+        initializingFaceTracker = false;
+    }
+}
+
+// Índices clave del rostro en MediaPipe (contorno ojos, labios, nariz y óvalo facial)
+const KEY_ANCHOR_POINTS = [
+    1, 4, 10, 152, 234, 454, // Nariz, frente, mentón, pómulos
+    33, 133, 159, 145,       // Ojo derecho
+    362, 263, 386, 374,      // Ojo izquierdo
+    13, 14, 61, 291, 0, 17   // Boca interna y comisuras
+];
+
+function procesarFotogramaRostro() {
+    if (!webcamRunning || !faceLandmarker || !webcamVideo || webcamVideo.readyState < 2) return;
+    if ((totemConfig.modoControlCabeza || 'auto') === 'auto') return;
+
+    const nowInMs = performance.now();
+    if (webcamVideo.currentTime === lastVideoTime) return;
+    lastVideoTime = webcamVideo.currentTime;
+
+    const results = faceLandmarker.detectForVideo(webcamVideo, nowInMs);
+
+    if (landmarksCtx && landmarksCanvas && totemConfig.mostrarVisorPuntos) {
+        landmarksCtx.clearRect(0, 0, landmarksCanvas.width, landmarksCanvas.height);
+    }
+
+    if (results.faceLandmarks && results.faceLandmarks.length > 0) {
+        faceDetected = true;
+        const landmarks = results.faceLandmarks[0];
+        const nose = landmarks[1];
+        const leftCheek = landmarks[234];
+        const rightCheek = landmarks[454];
+        const forehead = landmarks[10];
+        const chin = landmarks[152];
+
+        // Posición del rostro en el encuadre (invertido X por efecto espejo)
+        faceTrackState.centerX = -(nose.x - 0.5) * 2.0;
+        faceTrackState.centerY = -(nose.y - 0.5) * 2.0;
+
+        // Cálculo preciso de Yaw, Pitch y Roll a partir de los puntos de anclaje 3D
+        const dxCheeks = rightCheek.x - leftCheek.x;
+        const dzCheeks = rightCheek.z - leftCheek.z;
+        faceTrackState.yaw = Math.atan2(dzCheeks, Math.max(0.05, dxCheeks)) * 1.45;
+
+        const dyFace = chin.y - forehead.y;
+        const dzFace = chin.z - forehead.z;
+        faceTrackState.pitch = Math.atan2(dzFace, Math.max(0.05, dyFace)) * 1.35 + 0.12;
+
+        const dyCheeks = rightCheek.y - leftCheek.y;
+        faceTrackState.roll = -Math.atan2(dyCheeks, Math.max(0.05, dxCheeks)) * 0.9;
+
+        // Extraer coeficientes de expresión (Blendshapes: boca y parpadeo)
+        if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+            const categories = results.faceBlendshapes[0].categories;
+            const map = {};
+            for (let i = 0; i < categories.length; i++) {
+                map[categories[i].categoryName] = categories[i].score;
+            }
+            faceTrackState.blendshapesMap = map;
+            faceTrackState.jawOpen = Math.min(1.0, (map['jawOpen'] || 0) * 1.35 + (map['mouthFunnel'] || 0) * 0.4);
+            faceTrackState.mouthSmile = ((map['mouthSmileLeft'] || 0) + (map['mouthSmileRight'] || 0)) * 0.5;
+            faceTrackState.eyeBlinkL = map['eyeBlinkLeft'] || 0;
+            faceTrackState.eyeBlinkR = map['eyeBlinkRight'] || 0;
+        }
+
+        // Dibujar malla de puntos de anclaje en el visor HUD
+        if (landmarksCtx && landmarksCanvas && totemConfig.mostrarVisorPuntos) {
+            const w = landmarksCanvas.width;
+            const h = landmarksCanvas.height;
+
+            // Puntos secundarios de la malla 3D
+            landmarksCtx.fillStyle = 'rgba(16, 185, 129, 0.45)';
+            for (let i = 0; i < landmarks.length; i += 2) {
+                const pt = landmarks[i];
+                landmarksCtx.fillRect(pt.x * w - 1, pt.y * h - 1, 2, 2);
+            }
+
+            // Líneas de eje de simetría facial (Frente -> Nariz -> Mentón y Pómulo a Pómulo)
+            landmarksCtx.strokeStyle = 'rgba(0, 229, 255, 0.55)';
+            landmarksCtx.lineWidth = 1.2;
+            landmarksCtx.beginPath();
+            landmarksCtx.moveTo(forehead.x * w, forehead.y * h);
+            landmarksCtx.lineTo(nose.x * w, nose.y * h);
+            landmarksCtx.lineTo(chin.x * w, chin.y * h);
+            landmarksCtx.moveTo(leftCheek.x * w, leftCheek.y * h);
+            landmarksCtx.lineTo(nose.x * w, nose.y * h);
+            landmarksCtx.lineTo(rightCheek.x * w, rightCheek.y * h);
+            landmarksCtx.stroke();
+
+            // Puntos de anclaje maestros destacados en Cian brillante
+            landmarksCtx.fillStyle = '#00e5ff';
+            for (let idx of KEY_ANCHOR_POINTS) {
+                const pt = landmarks[idx];
+                if (pt) {
+                    landmarksCtx.beginPath();
+                    landmarksCtx.arc(pt.x * w, pt.y * h, 2.8, 0, Math.PI * 2);
+                    landmarksCtx.fill();
+                }
+            }
+        }
+    } else {
+        faceDetected = false;
     }
 }
 
@@ -297,8 +506,12 @@ function loadModel() {
             emissiveMaterials = [];
             eyeMaterials = [];
             mouthMaterials = [];
+            morphTargetMeshes = [];
 
             model.traverse((child) => {
+                if (child.isMesh && child.morphTargetDictionary && child.morphTargetInfluences) {
+                    morphTargetMeshes.push(child);
+                }
                 if (child.isMesh && child.material) {
                     const materials = Array.isArray(child.material) ? child.material : [child.material];
                     const meshName = child.name.toLowerCase();
@@ -921,19 +1134,74 @@ function reiniciarSesionTotem() {
 function animate() {
     requestAnimationFrame(animate);
     const time = clock.getElapsedTime();
+    const modoCabeza = totemConfig.modoControlCabeza || 'auto';
 
-    // Determinamos si ocurre un parpadeo natural de los ojos (110ms cada 3.5 a 6.5 segs)
+    // Si estamos en modo 'lookat' o 'mirror', procesamos el fotograma de la webcam
+    if (modoCabeza !== 'auto') {
+        procesarFotogramaRostro();
+    }
+
+    // Determinamos si ocurre un parpadeo natural (o real desde la webcam en modo espejo)
     if (time > nextBlinkTime) {
         blinkEndTime = time + 0.11;
         nextBlinkTime = time + 3.5 + Math.random() * 3.0;
     }
-    const isBlinking = time < blinkEndTime;
+    const isWebcamBlinking = (modoCabeza === 'mirror' && faceDetected) && ((faceTrackState.eyeBlinkL + faceTrackState.eyeBlinkR) * 0.5 > 0.42);
+    const isBlinking = isWebcamBlinking || (time < blinkEndTime);
 
-    // 1. GESTIÓN DE ESTADOS (MÁQUINA DE ANIMACIÓN Y COLOR)
-    if (iaPensando) {
+    // 1. GESTIÓN DE ESTADOS (MÁQUINA DE ANIMACIÓN, RASTREO FACIAL Y COLOR)
+    if (modoCabeza === 'mirror' && faceDetected && !iaPensando) {
+        // MODO ESPEJO / MARIONETA EN VIVO:
+        // El modelo 3D se ancla a los puntos de tu rostro en tiempo real (Yaw, Pitch, Roll)
+        targetRotationY = faceTrackState.yaw;
+        targetRotationX = faceTrackState.pitch;
+        targetRotationZ = faceTrackState.roll;
+
+        const targetColor = avatarHablando
+            ? (totemConfig.coloresDinamicos ? COLOR_SPEAKING : COLOR_CLASSIC_RED)
+            : (isUserSpeaking
+                ? (totemConfig.coloresDinamicos ? COLOR_LISTENING : COLOR_CLASSIC_RED)
+                : (totemConfig.coloresDinamicos ? COLOR_IDLE : COLOR_CLASSIC_RED));
+
+        // Si Sandy está hablando, combinamos el audio con la boca; si tú hablas, tu mandíbula real (jawOpen) controla el núcleo de la boca
+        let mouthEnergy = faceTrackState.jawOpen;
+        if (avatarHablando && reproductorAnalyser) {
+            reproductorAnalyser.getByteFrequencyData(dataArrayPlayback);
+            let maxVol = 0;
+            for (let i = 0; i < dataArrayPlayback.length; i++) {
+                if (dataArrayPlayback[i] > maxVol) maxVol = dataArrayPlayback[i];
+            }
+            mouthEnergy = Math.max(mouthEnergy, maxVol / 255.0);
+        }
+
+        const mouthIntensity = 1.6 + (mouthEnergy * mouthEnergy) * 38.0;
+        const eyeIntensity = isBlinking ? 0.12 : (3.2 + faceTrackState.mouthSmile * 3.0 + mouthEnergy * 2.5);
+
+        eyeMaterials.forEach(mat => {
+            mat.userData.targetColor.copy(targetColor);
+            mat.userData.targetIntensity = eyeIntensity;
+        });
+        mouthMaterials.forEach(mat => {
+            mat.userData.targetColor.copy(targetColor);
+            mat.userData.targetIntensity = mouthIntensity;
+        });
+
+        // Si el GLB posee MorphTargets (blendshapes ARKit), les transferimos los coeficientes faciales en vivo
+        morphTargetMeshes.forEach(mesh => {
+            const dict = mesh.morphTargetDictionary;
+            const inf = mesh.morphTargetInfluences;
+            for (const [name, score] of Object.entries(faceTrackState.blendshapesMap)) {
+                if (dict[name] !== undefined) {
+                    inf[dict[name]] = score;
+                }
+            }
+        });
+
+    } else if (iaPensando) {
         // Movimientos de cómputo
         targetRotationY = Math.sin(time * 3.1) * 0.25 + Math.cos(time * 5.7) * 0.1;
         targetRotationX = Math.cos(time * 2.2) * 0.15 - 0.12 + Math.sin(time * 4.3) * 0.08;
+        targetRotationZ = 0;
 
         const targetColor = totemConfig.coloresDinamicos ? COLOR_THINKING : COLOR_CLASSIC_RED;
         const pulse = 2.5 + Math.sin(time * 12.0) * 4.5;
@@ -959,15 +1227,21 @@ function animate() {
             hudMeterBar.style.width = `${Math.min(100, volumeRatio * 100)}%`;
         }
 
-        // Micro-movimientos orgánicos de cabeza y asentimiento enfático al hablar
-        targetRotationY = Math.sin(time * 1.7) * 0.04;
-        targetRotationX = -volumeRatio * 0.09 + Math.sin(time * 2.3) * 0.02;
+        // Si está activo el seguimiento de mirada ('lookat'), Sandy mira directamente hacia donde está tu cara mientras te habla
+        if (modoCabeza === 'lookat' && faceDetected) {
+            targetRotationY = faceTrackState.centerX * 0.45 + Math.sin(time * 1.7) * 0.02;
+            targetRotationX = -faceTrackState.centerY * 0.28 - volumeRatio * 0.09;
+            targetRotationZ = faceTrackState.roll * 0.25;
+        } else {
+            targetRotationY = Math.sin(time * 1.7) * 0.04;
+            targetRotationX = -volumeRatio * 0.09 + Math.sin(time * 2.3) * 0.02;
+            targetRotationZ = 0;
+        }
 
         const targetColor = totemConfig.coloresDinamicos ? COLOR_SPEAKING : COLOR_CLASSIC_RED;
         const mouthIntensity = 1.8 + (volumeRatio * volumeRatio) * 36.0;
         const eyeIntensity = isBlinking ? 0.15 : (3.2 + volumeRatio * 3.5);
 
-        // Ojos mantienen atención firme con parpadeo ocasional; Boca hace el Lip-Sync fotónico puro
         eyeMaterials.forEach(mat => {
             mat.userData.targetColor.copy(targetColor);
             mat.userData.targetIntensity = eyeIntensity;
@@ -978,9 +1252,16 @@ function animate() {
         });
 
     } else if (isUserSpeaking) {
-        // Estado Escuchando: inclina levemente la cabeza con atención y reacciona en color Cian
-        targetRotationY = Math.sin(time * 0.8) * 0.03;
-        targetRotationX = 0.05;
+        // Estado Escuchando: sigue el rostro del usuario si está en modo 'lookat' e inclina levemente con empatía
+        if (modoCabeza === 'lookat' && faceDetected) {
+            targetRotationY = faceTrackState.centerX * 0.45;
+            targetRotationX = -faceTrackState.centerY * 0.28 + 0.04;
+            targetRotationZ = faceTrackState.roll * 0.35;
+        } else {
+            targetRotationY = Math.sin(time * 0.8) * 0.03;
+            targetRotationX = 0.05;
+            targetRotationZ = 0;
+        }
 
         const targetColor = totemConfig.coloresDinamicos ? COLOR_LISTENING : COLOR_CLASSIC_RED;
         const micRatio = Math.min(1.0, currentMicVolume / 60.0);
@@ -994,10 +1275,11 @@ function animate() {
             mat.userData.targetIntensity = 1.5 + micRatio * 2.5;
         });
 
-    } else if (enAttractLoop && totemConfig.modoAttractLoop) {
-        // Modo Attract Loop: busca personas mirando alrededor y lanza pulsos llamativos
+    } else if (enAttractLoop && totemConfig.modoAttractLoop && !(modoCabeza !== 'auto' && faceDetected)) {
+        // Modo Attract Loop: busca personas mirando alrededor (si detecta un rostro en cámara, sale de búsqueda y lo mira)
         targetRotationY = Math.sin(time * 1.1) * 0.35;
         targetRotationX = Math.sin(time * 0.7) * 0.08;
+        targetRotationZ = 0;
 
         const targetColor = totemConfig.coloresDinamicos ? COLOR_IDLE : COLOR_CLASSIC_RED;
         const attractPulse = isBlinking ? 0.15 : (3.0 + Math.sin(time * 4.0) * 2.0);
@@ -1008,9 +1290,16 @@ function animate() {
         });
 
     } else {
-        // Estado Reposo: Micro movimientos orgánicos y respiración suave
-        targetRotationY = Math.sin(time * 0.5) * 0.06;
-        targetRotationX = 0;
+        // Estado Reposo: si está en modo 'lookat' y ve a alguien frente al tótem, lo sigue con la mirada
+        if (modoCabeza === 'lookat' && faceDetected) {
+            targetRotationY = faceTrackState.centerX * 0.45;
+            targetRotationX = -faceTrackState.centerY * 0.25;
+            targetRotationZ = faceTrackState.roll * 0.2;
+        } else {
+            targetRotationY = Math.sin(time * 0.5) * 0.06;
+            targetRotationX = 0;
+            targetRotationZ = 0;
+        }
 
         const targetColor = totemConfig.coloresDinamicos ? COLOR_IDLE : COLOR_CLASSIC_RED;
         const idleIntensity = isBlinking ? 0.15 : (2.0 + Math.sin(time * 3.0) * 1.0);
@@ -1025,14 +1314,17 @@ function animate() {
         });
     }
 
-    // 2. APLICACIÓN DE MATEMÁTICA FLUIDA (LERP ROTACIÓN)
-    currentRotationX += (targetRotationX - currentRotationX) * LERP_ROTATION;
-    currentRotationY += (targetRotationY - currentRotationY) * LERP_ROTATION;
+    // 2. APLICACIÓN DE MATEMÁTICA FLUIDA (LERP ROTACIÓN X, Y, Z)
+    const lerpFactor = (modoCabeza === 'mirror' && faceDetected) ? 0.22 : LERP_ROTATION;
+    currentRotationX += (targetRotationX - currentRotationX) * lerpFactor;
+    currentRotationY += (targetRotationY - currentRotationY) * lerpFactor;
+    currentRotationZ += (targetRotationZ - currentRotationZ) * lerpFactor;
 
     // 3. APLICACIÓN A LA MALLA (3D)
     if (model) {
         model.rotation.x = currentRotationX;
         model.rotation.y = currentRotationY;
+        model.rotation.z = currentRotationZ;
         model.position.y = -0.8 + Math.sin(time) * 0.1;
     }
 
@@ -1048,7 +1340,7 @@ function animate() {
 }
 
 // ==========================================
-// SECCIÓN 8: ARRANQUE DE SISTEMA
+// SECCIÓN 8: ARRANQUE DE SISTEMA Y EVENTOS DE TRACKING FACIAL
 // ==========================================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1056,9 +1348,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sincronizar periódicamente cada 2.5 segundos por si se dispara el Salvavidas o se cambian ajustes desde otro dispositivo
     setInterval(() => sincronizarConfigAdmin(false), 2500);
 
-        // Pre-cargar Three.js y el modelo 3D en segundo plano apenas abre la página para arranque instantáneo
-    initThreeJS();
-    loadModel();
+
 
     const btnIniciar = document.getElementById('btnIniciar');
     if (btnIniciar) {
@@ -1073,6 +1363,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
             iniciarSistemaDeAudio();
+            actualizarEstadoFaceTrackerUI();
         });
     }
 });

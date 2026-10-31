@@ -358,6 +358,24 @@
                 </label>
             </div>
 
+            <label for="selectModoCabeza">🎭 Modo de Control del Modelo 3D (Webcam Face Tracking):</label>
+            <select id="selectModoCabeza" style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-dark); color: var(--text-main); font-size: 14px; margin-bottom: 12px;">
+                <option value="auto">🤖 Automático IA (Movimiento procedimental)</option>
+                <option value="lookat">👀 Seguimiento de Mirada (Mira al rostro frente a la cámara)</option>
+                <option value="mirror">🎭 Espejo / Marioneta en Vivo (Replica giros, boca y parpadeo de tu cara)</option>
+            </select>
+
+            <div class="toggle-row">
+                <div class="toggle-info">
+                    <span class="toggle-title">🕸️ Visor de Puntos de Anclaje Faciales (HUD)</span>
+                    <span class="toggle-desc">Muestra en una esquina la malla 3D de puntos sobre el rostro detectado por la webcam.</span>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="chkVisorPuntos" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
             <label for="inputNombreEvento">🏷️ Nombre del Evento:</label>
             <input type="text" id="inputNombreEvento" placeholder="Ej: Lanzamiento Producto X">
 
@@ -400,6 +418,8 @@
                 document.getElementById('chkHudEstado').checked = data.mostrarHudEstado !== false;
                 document.getElementById('chkAttractLoop').checked = data.modoAttractLoop !== false;
                 document.getElementById('chkColoresDinamicos').checked = data.coloresDinamicos !== false;
+                document.getElementById('selectModoCabeza').value = data.modoControlCabeza || 'auto';
+                document.getElementById('chkVisorPuntos').checked = data.mostrarVisorPuntos !== false;
                 document.getElementById('inputNombreEvento').value = data.nombreEvento || '';
                 document.getElementById('inputInstrucciones').value = data.instrucciones || '';
                 document.getElementById('pautaActualPreview').innerText = data.pautaCompleta || 'Sin pauta cargada aún.';
@@ -421,6 +441,8 @@
                 mostrarHudEstado: document.getElementById('chkHudEstado').checked,
                 modoAttractLoop: document.getElementById('chkAttractLoop').checked,
                 coloresDinamicos: document.getElementById('chkColoresDinamicos').checked,
+                modoControlCabeza: document.getElementById('selectModoCabeza').value,
+                mostrarVisorPuntos: document.getElementById('chkVisorPuntos').checked,
                 nombreEvento: document.getElementById('inputNombreEvento').value.trim(),
                 instrucciones: document.getElementById('inputInstrucciones').value.trim()
             };

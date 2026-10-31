@@ -213,14 +213,113 @@
             color: #f8fafc;
             background: rgba(30, 41, 59, 0.8);
         }
+
+        /* Visor Cyberpunk de Puntos de Anclaje Faciales (Webcam Face Tracking) */
+        #face-tracker-hud {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 240px;
+            background: rgba(15, 23, 42, 0.82);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(16, 185, 129, 0.45);
+            border-radius: 14px;
+            padding: 10px;
+            z-index: 550;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.65);
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .tracker-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            color: #10b981;
+            text-transform: uppercase;
+        }
+        .tracker-viewport {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4 / 3;
+            background: #05080c;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #webcam-video {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            opacity: 0.32;
+            filter: grayscale(60%) contrast(120%);
+        }
+        #landmarks-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 100%;
+            transform: scaleX(-1);
+        }
+        .tracker-controls {
+            display: flex;
+            gap: 4px;
+        }
+        .tracker-mode-btn {
+            flex: 1;
+            padding: 6px 4px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #1e293b;
+            color: #94a3b8;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .tracker-mode-btn.active {
+            background: #10b981;
+            color: #0f172a;
+            border-color: #10b981;
+        }
+        #tracker-toggle-pill {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 540;
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            color: #cbd5e1;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 8px 14px;
+            border-radius: 999px;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            gap: 6px;
+            transition: 0.2s;
+        }
+        #tracker-toggle-pill:hover {
+            border-color: #10b981;
+            color: #ffffff;
+        }
     </style>
 
-    <!-- Import Map para Three.js Moderno (ES Modules r160) -->
+    <!-- Import Map para Three.js Moderno y MediaPipe Face Landmarker -->
     <script type="importmap">
         {
             "imports": {
                 "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
             }
         }
     </script>
@@ -236,6 +335,29 @@
                 <div id="progress-bar"></div>
             </div>
             <div id="loading-text">Descargando modelo 3D (0%)...</div>
+        </div>
+    </div>
+
+    <!-- Botón rápido para activar/mostrar el Rastreo Facial por Webcam -->
+    <div id="tracker-toggle-pill" title="Configurar seguimiento facial por webcam">
+        <span>📷 Tracking Facial:</span>
+        <strong id="tracker-pill-label">Auto IA</strong>
+    </div>
+
+    <!-- Visor HUD de Puntos de Anclaje Faciales (Webcam + 478 Landmarks) -->
+    <div id="face-tracker-hud">
+        <div class="tracker-header">
+            <span id="tracker-status-title">🕸️ ANCLAJE FACIAL 3D</span>
+            <span id="btn-close-tracker" style="cursor:pointer; color:#94a3b8; font-size:14px;" title="Minimizar visor">✕</span>
+        </div>
+        <div class="tracker-viewport">
+            <video id="webcam-video" autoplay playsinline muted></video>
+            <canvas id="landmarks-canvas" width="320" height="240"></canvas>
+        </div>
+        <div class="tracker-controls">
+            <button class="tracker-mode-btn active" data-mode="auto" title="Movimiento procedimental por IA">🤖 Auto</button>
+            <button class="tracker-mode-btn" data-mode="lookat" title="Sandy sigue tu rostro con la mirada">👀 Mirada</button>
+            <button class="tracker-mode-btn" data-mode="mirror" title="El rostro 3D imita todos tus movimientos y boca en vivo">🎭 Espejo</button>
         </div>
     </div>
 

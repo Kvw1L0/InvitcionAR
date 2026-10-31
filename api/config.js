@@ -18,6 +18,8 @@ function formatConfigResponse(data = {}) {
         mostrarHudEstado: data.mostrarHudEstado ?? true,
         modoAttractLoop: data.modoAttractLoop ?? true,
         coloresDinamicos: data.coloresDinamicos ?? true,
+        modoControlCabeza: data.modoControlCabeza || 'auto',
+        mostrarVisorPuntos: data.mostrarVisorPuntos ?? true,
         nombreEvento: data.nombreEvento || 'Activación Jungle',
         descripcion: data.descripcion || '',
         instrucciones: data.instrucciones || '',
@@ -57,6 +59,8 @@ export default async function handler(req, res) {
                 mostrarHudEstado,
                 modoAttractLoop,
                 coloresDinamicos,
+                modoControlCabeza,
+                mostrarVisorPuntos,
                 nombreEvento,
                 descripcion,
                 instrucciones,
@@ -68,6 +72,8 @@ export default async function handler(req, res) {
             if (typeof mostrarHudEstado === 'boolean') updatePayload.mostrarHudEstado = mostrarHudEstado;
             if (typeof modoAttractLoop === 'boolean') updatePayload.modoAttractLoop = modoAttractLoop;
             if (typeof coloresDinamicos === 'boolean') updatePayload.coloresDinamicos = coloresDinamicos;
+            if (typeof modoControlCabeza === 'string') updatePayload.modoControlCabeza = modoControlCabeza;
+            if (typeof mostrarVisorPuntos === 'boolean') updatePayload.mostrarVisorPuntos = mostrarVisorPuntos;
             if (typeof nombreEvento === 'string') updatePayload.nombreEvento = nombreEvento;
             if (typeof descripcion === 'string') updatePayload.descripcion = descripcion;
             if (typeof instrucciones === 'string') updatePayload.instrucciones = instrucciones;
