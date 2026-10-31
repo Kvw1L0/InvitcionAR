@@ -488,6 +488,7 @@ function onWindowResize() {
 // ==========================================
 
 function loadModel() {
+    window.__cargandoModelo = true;
     console.log("⚙️ SECCIÓN 2: Cargando Modelo 3D...");
     const loader = new GLTFLoader();
     loader.setCrossOrigin('anonymous');
@@ -1348,13 +1349,49 @@ document.addEventListener('DOMContentLoaded', () => {
     // Sincronizar periódicamente cada 2.5 segundos por si se dispara el Salvavidas o se cambian ajustes desde otro dispositivo
     setInterval(() => sincronizarConfigAdmin(false), 2500);
 
+    // Pre-cargar Three.js y el modelo 3D en segundo plano apenas abre la página para arranque instantáneo
+    initThreeJS();
+    loadModel();
 
+    // Botones interactivos del visor de Puntos de Anclaje Facial en pantalla
+    document.querySelectorAll('.tracker-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            totemConfig.modoControlCabeza = btn.dataset.mode;
+            if (totemConfig.modoControlCabeza !== 'auto') {
+                totemConfig.mostrarVisorPuntos = true;
+            }
+            localStorage.setItem('jungle_totem_config', JSON.stringify(totemConfig));
+            actualizarEstadoFaceTrackerUI();
+        });
+    });
+
+    if (trackerTogglePill) {
+        trackerTogglePill.addEventListener('click', () => {
+            if ((totemConfig.modoControlCabeza || 'auto') === 'auto') {
+                totemConfig.modoControlCabeza = 'mirror';
+            }
+            totemConfig.mostrarVisorPuntos = true;
+            localStorage.setItem('jungle_totem_config', JSON.stringify(totemConfig));
+            actualizarEstadoFaceTrackerUI();
+        });
+    }
+
+    const btnCloseTracker = document.getElementById('btn-close-tracker');
+    if (btnCloseTracker) {
+        btnCloseTracker.addEventListener('click', () => {
+            totemConfig.mostrarVisorPuntos = false;
+            localStorage.setItem('jungle_totem_config', JSON.stringify(totemConfig));
+            actualizarEstadoFaceTrackerUI();
+        });
+    }
 
     const btnIniciar = document.getElementById('btnIniciar');
     if (btnIniciar) {
         btnIniciar.addEventListener('click', () => {
             window.__experienciaIniciada = true;
             btnIniciar.style.display = 'none';
+            if (!renderer) initThreeJS();
+            if (!model && !window.__cargandoModelo) loadModel();
             if (model) {
                 const overlay = document.getElementById('overlay');
                 if (overlay) {
